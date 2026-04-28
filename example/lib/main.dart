@@ -1,0 +1,121 @@
+import 'dart:convert';
+
+import 'package:bot_toast/bot_toast.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:window_manager_plus/window_manager_plus.dart';
+import 'package:window_manager_plus_example/pages/home.dart';
+import 'package:window_manager_plus_example/utils/config.dart';
+
+void main(List<String> args) async {
+  if (kDebugMode) {
+    print(args);
+  }
+
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final windowId = args.isEmpty ? 0 : int.tryParse(args[0]) ?? 0;
+  final Map<String, dynamic> argsMap =
+      args.isEmpty ? {} : {'arg1': args[1], 'arg2': args[2]};
+  windowId == 0
+      ? await WindowManagerPlus.ensureInitialized(windowId)
+      : await WindowManagerPlus.ensureInitializedSecondary(
+          windowId,
+          isEnabledReuse: true,
+        );
+
+  WindowOptions windowOptions = WindowOptions(
+    size: const Size(800, 600),
+    center: true,
+    backgroundColor: Colors.transparent,
+    skipTaskbar: false,
+    titleBarStyle: TitleBarStyle.hidden,
+    windowButtonVisibility: false,
+    title: 'Window ID ${WindowManagerPlus.current.id}',
+  );
+  WindowManagerPlus.current.waitUntilReadyToShow(windowOptions, () async {
+    await WindowManagerPlus.current.show();
+    await WindowManagerPlus.current.focus();
+  });
+
+  runApp(MyApp(
+    isSecondary: windowId != 0,
+    args: argsMap,
+  ));
+}
+
+class MyApp extends StatefulWidget {
+  const MyApp({super.key, required this.isSecondary, required this.args});
+
+  final Map<String, dynamic> args;
+  final bool isSecondary;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  @override
+  void initState() {
+    sharedConfigManager.addListener(_configListen);
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    sharedConfigManager.removeListener(_configListen);
+    super.dispose();
+  }
+
+  void _configListen() {
+    _themeMode = sharedConfig.themeMode;
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final virtualWindowFrameBuilder = VirtualWindowFrameInit();
+    final botToastBuilder = BotToastInit();
+
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
+      builder: (context, child) {
+        child = virtualWindowFrameBuilder(context, child);
+        child = botToastBuilder(context, child);
+        return child;
+      },
+      navigatorObservers: [BotToastNavigatorObserver()],
+      home: widget.isSecondary
+          ? SecondaryWindowHost(
+              initialArgs: widget.args,
+              windowOptions: WindowOptions(
+                size: const Size(800, 600),
+                center: true,
+                backgroundColor: Colors.transparent,
+                skipTaskbar: false,
+                titleBarStyle: TitleBarStyle.hidden,
+                windowButtonVisibility: false,
+                title: 'Window ID ${WindowManagerPlus.current.id}',
+              ),
+              loadingBuilder: (context) => const Center(
+                child: SizedBox(
+                  height: 60,
+                  width: 60,
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+              builder: (context, args) {
+                final Map<String, dynamic> argsMap =
+                    args.isEmpty ? {} : {'arg1': args[0], 'arg2': args[1]};
+                debugPrint('args: $args');
+
+                return const HomePage();
+              },
+            )
+          : const HomePage(),
+    );
+  }
+}
