@@ -1,1075 +1,863 @@
-# window_manager_plus
+# MultiWindowManager
 
-[![pub version][pub-image]][pub-url] [![All Contributors][all-contributors-image]](#contributors)
+[![pub version][pub-image]][pub-url]
 
-[pub-image]: https://img.shields.io/pub/v/window_manager_plus.svg
-[pub-url]: https://pub.dev/packages/window_manager_plus
-[all-contributors-image]: https://img.shields.io/github/all-contributors/pichillilorenzo/window_manager_plus?color=ee8449&style=flat-square
+[pub-image]: https://img.shields.io/pub/v/multi_window_manager.svg
+[pub-url]: https://pub.dev/packages/multi_window_manager
 
-This plugin allows Flutter desktop apps to create and manage multiple windows, such as resizing and repositioning, and communicate between them.
+Flutter desktop plugin for creating and managing multiple windows: resizing, repositioning, and inter-window communication.
 
-This is a fork and a re-work of the original [window_manager](https://pub.dev/packages/window_manager) plugin.
-With inspiration from the [desktop_multi_window](https://pub.dev/packages/desktop_multi_window) plugin,
-this new implementation allows the creation and management of multiple windows.
+Fork and re-work of [window_manager_plus](https://pub.dev/packages/window_manager_plus), which itself is based on [window_manager](https://pub.dev/packages/window_manager).
+Key additions: **window reuse cache** (avoid re-creating Flutter engines), **cross-window registry** backed by shared native state, **fixed critical errors** fixed restart and crash after close secondary window, **fast isolate-isolate channel** fast channel for realtime windows notify (in process).
 
 **Linux is not currently supported.**
 
 ---
 
 - [Platform Support](#platform-support)
-- [Quick Start](#quick-start)
-  - [Setup to support multiple windows](#setup-to-support-multiple-windows)
-    - [macOS](#macos)
-    - [Windows](#windows)
-  - [Usage](#usage)
-    - [Create a new window](#create-a-new-window)
-    - [Communication between windows](#communication-between-windows)
-    - [Listening events](#listening-events)
-    - [Quit on close](#quit-on-close)
-      - [macOS](#macos-1)
-      - [Windows](#windows-1)
-    - [Confirm before closing](#confirm-before-closing)
-    - [Hidden at launch](#hidden-at-launch)
-      - [Linux](#linux)
-      - [macOS](#macos-2)
-      - [Windows](#windows-2)
-- [Articles](#articles)
+- [Setup](#setup)
+  - [Windows](#windows-setup)
+  - [macOS](#macos-setup)
+- [Usage](#usage)
+  - [Initialization](#initialization)
+  - [Create a window](#create-a-window)
+  - [Reuse cached windows](#reuse-cached-windows)
+  - [Communication between windows](#communication-between-windows)
+  - [Window events](#window-events)
+  - [Window registry](#window-registry)
+  - [Confirm before closing](#confirm-before-closing)
+  - [Quit on close](#quit-on-close)
+  - [Hidden at launch](#hidden-at-launch)
 - [API](#api)
-  - [WindowManagerPlus](#windowmanagerplus)
-    - [Methods](#methods)
-    - [Static Methods](#static-methods)
-  - [WindowListener](#windowlistener)
-    - [Methods](#methods-1)
-- [Contributors](#contributors)
-- [License](#license)
+  - [MultiWindowManager](#multiwindowmanager-1)
+  - [WindowListener](#windowlistener-1)
+  - [WindowRegistry](#windowregistry-1)
+
+---
 
 ## Platform Support
 
 | Linux | macOS | Windows |
 |:-----:|:-----:|:-------:|
-|   ❌   |   ✅   |   ✅️    |
+|  n/a  |   +   |    +    |
 
-## Quick Start
+---
 
-### Setup to support multiple windows
+## Setup
 
-#### macOS
+### Windows setup
 
-Change the file `macos/Runner/MainFlutterWindow.swift` as follows:
-
-```diff
-import Cocoa
-import FlutterMacOS
-+ import window_manager_plus
-
-class MainFlutterWindow: NSPanel {
-    override func awakeFromNib() {
-        let flutterViewController = FlutterViewController.init()
-        let windowFrame = self.frame
-        self.contentViewController = flutterViewController
-        self.setFrame(windowFrame, display: true)
-        
-        RegisterGeneratedPlugins(registry: flutterViewController)
-+        
-+        WindowManagerPlusPlugin.RegisterGeneratedPlugins = RegisterGeneratedPlugins
-        
-        super.awakeFromNib()
-    }
-    
-    override public func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
-        super.order(place, relativeTo: otherWin)
-        hiddenWindowAtLaunch()
-    }
-}
-```
-
-Change the file `macos/Runner/AppDelegate.swift` as follows:
+Edit `windows/runner/main.cpp`:
 
 ```diff
-import Cocoa
-import FlutterMacOS
-+ import window_manager_plus
+ #include <flutter/dart_project.h>
+ #include <flutter/flutter_view_controller.h>
+ #include <windows.h>
 
-@main
-class AppDelegate: FlutterAppDelegate {
-  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
--    return true
-+    return NSApp.windows.filter({$0 is MainFlutterWindow || $0 is WindowManagerPlusFlutterWindow}).count == 1 // or return false
-  }
-}
-```
++#include <iostream>
+ #include "flutter_window.h"
+ #include "utils.h"
++#include "multi_window_manager/multi_window_manager_plugin.h"
 
-Without changing the return logic, the application will close when the main flutter window is closed.
+ int APIENTRY wWinMain(...) {
+   ...
 
-#### Windows
-
-Change the file `windows/runner/main.cpp` as follows:
-
-```diff
-#include <flutter/dart_project.h>
-#include <flutter/flutter_view_controller.h>
-#include <windows.h>
-
-#include "flutter_window.h"
-#include "utils.h"
-
-+ #include <iostream>
-+ #include "window_manager_plus/window_manager_plus_plugin.h"
-
-int APIENTRY wWinMain(_In_ HINSTANCE instance,
-                      _In_opt_ HINSTANCE prev,
-                      _In_ wchar_t* command_line,
-                      _In_ int show_command) {
-  // Attach to console when present (e.g., 'flutter run') or create a
-  // new console when running with a debugger.
-  if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
-    CreateAndAttachConsole();
-  }
-
-  // Initialize COM, so that it is available for use in the library and/or
-  // plugins.
-  ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
-  flutter::DartProject project(L"data");
-
-  std::vector<std::string> command_line_arguments = GetCommandLineArguments();
-
-  project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
-
-  FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"window_manager_example", origin, size)) {
-    return EXIT_FAILURE;
-  }
+   FlutterWindow window(project);
+   Win32Window::Point origin(10, 10);
+   Win32Window::Size size(1280, 720);
+   if (!window.CreateAndShow(L"my_app", origin, size)) {
+     return EXIT_FAILURE;
+   }
 -  window.SetQuitOnClose(true);
-+  window.SetQuitOnClose(false);
-+
-+  WindowManagerPlusPluginSetWindowCreatedCallback(
++  window.SetQuitOnClose(false);  // let MultiWindowManager decide when to quit
+
++  MultiWindowManagerPluginSetWindowCreatedCallback(
 +      [](std::vector<std::string> command_line_arguments) {
 +        flutter::DartProject project(L"data");
-+
-+        project.set_dart_entrypoint_arguments(
-+            std::move(command_line_arguments));
++        project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 +
 +        auto window = std::make_shared<FlutterWindow>(project);
 +        Win32Window::Point origin(10, 10);
 +        Win32Window::Size size(1280, 720);
-+        // Check whether window->Create or window->CreateAndShow is available.
-+        // Take a look at the code above for the main flutter window and 
-+        // what method the variable "FlutterWindow window(project)" calls
-+        if (!window->Create(L"window_manager_example", origin, size)) {
-+          std::cerr << "Failed to create a new window" << std::endl;
++        if (!window->CreateAndShow(L"my_app", origin, size)) {
++          std::cerr << "Failed to create window" << std::endl;
 +        }
 +        window->SetQuitOnClose(false);
 +        return std::move(window);
 +      });
 
-  ::MSG msg;
-  while (::GetMessage(&msg, nullptr, 0, 0)) {
-    ::TranslateMessage(&msg);
-    ::DispatchMessage(&msg);
-  }
-
-  ::CoUninitialize();
-  return EXIT_SUCCESS;
-}
+   ::MSG msg;
+   ...
 ```
 
-`window->SetQuitOnClose(false);` is necessary to prevent the application from closing when the window is closed.
+`SetQuitOnClose(false)` prevents each child window from terminating the process when it closes.
 
-If you want to close the App only when the main window is closed, you can set `window->SetQuitOnClose(true);` in the main window.
-The others called inside the `WindowManagerPlusPluginSetWindowCreatedCallback` should be set to `false`.
+### macOS setup
 
-### Usage
-
-You must call `WindowManagerPlus.ensureInitialized` static method and `await` it before using any `WindowManagerPlus` methods or `WindowManagerPlus.current`.
-It is used to initialize the plugin with the current window ID.
-
-When creating a new window, the `args` parameter of the `main` function will have the window ID as a String.
-You must parse it to an integer and pass it to the `WindowManagerPlus.ensureInitialized` method.
-If the `args` parameter is empty or the first argument is not an integer, then we are in the main window, which ID is exactly `0`.
-
-The other arguments will contain the arguments passed to the `WindowManagerPlus.createWindow` method, if any.
-
-```dart
-import 'package:flutter/material.dart';
-import 'package:window_manager_plus/window_manager_plus.dart';
-
-// Must add List<String> args parameter to your main function.
-void main(List<String> args) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // await the initialization of the plugin.
-  // Here is an example of how to use ensureInitialized in the main function:
-  await WindowManagerPlus.ensureInitialized(args.isEmpty ? 0 : int.tryParse(args[0]) ?? 0);
-  
-  // Now you can use the plugin, such as WindowManagerPlus.current
-  WindowOptions windowOptions = WindowOptions(
-    size: Size(800, 600),
-    center: true,
-    backgroundColor: Colors.transparent,
-    skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.hidden,
-  );
-  WindowManagerPlus.current.waitUntilReadyToShow(windowOptions, () async {
-    await WindowManagerPlus.current.show();
-    await WindowManagerPlus.current.focus();
-  });
-
-  runApp(MyApp());
-}
-```
-
-#### Create a new window
-
-You can create a new window by calling the `WindowManagerPlus.createWindow` static method.
-If you want control the new window, you can use the return value of the method, which returns a `WindowManagerPlus` instance.
-
-```dart
-final newWindow = await WindowManagerPlus.createWindow(['my test arg 1', 'my test arg 2']);
-if (newWindow != null) {
-  print('New Created Window: $newWindow');
-}
-```
-
-#### Communication between windows
-
-You can communicate with another window by using the `WindowManagerPlus.invokeMethodToWindow` method.
-The first parameter is the ID of the window you want to communicate with.
-The second parameter is the method name you want to call.
-The third parameter is the arguments you want to pass to the method, if any.
-
-The other window must register and implement the `WindowListener` class and override the `WindowListener.onEventFromWindow` method to receive the event.
-
-```dart
-// assuming we are in the first window, Window ID 0, and we want to communicate with the second window.
-final secondWindowId = 1; // ID of the second window
-final result = await WindowManagerPlus.current.invokeMethodToWindow(secondWindowId, 'myTestMethod', ['arg1', 'arg2']);
-// the result will be 'Hello from Window 1'
-
-// assuming we are in the second window, Window ID 1
-class _MyWidgetState extends State<MyWidget> with WindowListener {
-
-  // ...
-
-  @override
-  void initState() {
-    WindowManagerPlus.current.addListener(this);
-    super.initState();
-  }
-
-  @override
-  void dispose() {
-    WindowManagerPlus.current.removeListener(this);
-    super.dispose();
-  }
-  
-  // ...
-  
-  @override
-  Future<dynamic> onEventFromWindow(String eventName, int fromWindowId, dynamic arguments) async {
-    print('[${WindowManagerPlus.current}] Event $eventName from Window $fromWindowId with arguments $arguments');
-    return 'Hello from ${WindowManagerPlus.current}';
-  }
-}
-```
-
-Using `WindowManagerPlus.getAllWindowManagerIds()` static method you can get all the window manager ids available.
-
-> Please see the example app of this plugin for a full example.
-
-#### Listening events
-
-The `WindowListener` mixin class is used to listen to window events.
-If this is used as a Global Listener using the `WindowManagerPlus.addGlobalListener` static method,
-the `windowId` parameter will be the ID of the window that emitted the event,
-otherwise, it will be always `null`.
-
-```dart
-import 'package:flutter/cupertino.dart';
-import 'package:window_manager_plus/window_manager_plus.dart';
-
-class HomePage extends StatefulWidget {
-  @override
-  _HomePageState createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> with WindowListener {
-  @override
-  void initState() {
-    super.initState();
-    WindowManagerPlus.current.addListener(this);
-  }
-
-  @override
-  void dispose() {
-    WindowManagerPlus.current.removeListener(this);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // ...
-  }
-
-  @override
-  void onWindowEvent(String eventName, [int? windowId]) {
-    print('[WindowManager] onWindowEvent: $eventName');
-  }
-
-  @override
-  void onWindowClose([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowFocus([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowBlur([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowMaximize([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowUnmaximize([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowMinimize([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowRestore([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowResize([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowMove([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowEnterFullScreen([int? windowId]) {
-    // do something
-  }
-
-  @override
-  void onWindowLeaveFullScreen([int? windowId]) {
-    // do something
-  }
-}
-```
-
-#### Quit on close
-
-If you need to use the hide method, you need to disable `QuitOnClose`.
-
-##### macOS
-
-Change the file `macos/Runner/AppDelegate.swift` as follows:
+Edit `macos/Runner/MainFlutterWindow.swift`:
 
 ```diff
-import Cocoa
-import FlutterMacOS
+ import Cocoa
+ import FlutterMacOS
++import multi_window_manager
 
-@NSApplicationMain
-class AppDelegate: FlutterAppDelegate {
-  override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
--    return true
-+    return false
-  }
-}
-```
-
-##### Windows
-
-Change the file `windows/runner/main.cpp` as follows:
-
-```diff
-#include <flutter/dart_project.h>
-#include <flutter/flutter_view_controller.h>
-#include <windows.h>
-
-#include <iostream>
-
-#include "flutter_window.h"
-#include "utils.h"
-
-int APIENTRY wWinMain(_In_ HINSTANCE instance,
-                      _In_opt_ HINSTANCE prev,
-                      _In_ wchar_t* command_line,
-                      _In_ int show_command) {
-  // Attach to console when present (e.g., 'flutter run') or create a
-  // new console when running with a debugger.
-  if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
-    CreateAndAttachConsole();
-  }
-
-  // Initialize COM, so that it is available for use in the library and/or
-  // plugins.
-  ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
-  flutter::DartProject project(L"data");
-
-  std::vector<std::string> command_line_arguments = GetCommandLineArguments();
-
-  project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
-
-  FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.CreateAndShow(L"window_manager_example", origin, size)) {
-    return EXIT_FAILURE;
-  }
--  window.SetQuitOnClose(true);
-+  window.SetQuitOnClose(false);
-
-  ::MSG msg;
-  while (::GetMessage(&msg, nullptr, 0, 0)) {
-    ::TranslateMessage(&msg);
-    ::DispatchMessage(&msg);
-  }
-
-  ::CoUninitialize();
-  return EXIT_SUCCESS;
-}
-```
-
-#### Confirm before closing
-
-```dart
-import 'package:flutter/cupertino.dart';
-import 'package:window_manager/window_manager.dart';
-
-class HomePage extends StatefulWidget {
-  @override
-  _HomePageState createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> with WindowListener {
-  @override
-  void initState() {
-    super.initState();
-    WindowManagerPlus.current.addListener(this);
-    _init();
-  }
-
-  @override
-  void dispose() {
-    WindowManagerPlus.current.removeListener(this);
-    super.dispose();
-  }
-
-  void _init() async {
-    // Add this line to override the default close handler
-    await WindowManagerPlus.current.setPreventClose(true);
-    setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // ...
-  }
-
-  @override
-  void onWindowClose() async {
-    bool _isPreventClose = await WindowManagerPlus.current.isPreventClose();
-    if (_isPreventClose) {
-      showDialog(
-        context: context,
-        builder: (_) {
-          return AlertDialog(
-            title: Text('Are you sure you want to close this window?'),
-            actions: [
-              TextButton(
-                child: Text('No'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-              ),
-              TextButton(
-                child: Text('Yes'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  await WindowManagerPlus.current.destroy();
-                },
-              ),
-            ],
-          );
-        },
-      );
-    }
-  }
-}
-```
-
-#### Hidden at launch
-
-##### Linux
-
-Change the file `linux/my_application.cc` as follows:
-
-```diff
-
-...
-
-// Implements GApplication::activate.
-static void my_application_activate(GApplication* application) {
-  
-  ...
-
-  gtk_window_set_default_size(window, 1280, 720);
--  gtk_widget_show(GTK_WIDGET(window));
-+  gtk_widget_realize(GTK_WIDGET(window));
-
-  g_autoptr(FlDartProject) project = fl_dart_project_new();
-  fl_dart_project_set_dart_entrypoint_arguments(project, self->dart_entrypoint_arguments);
-
-  FlView* view = fl_view_new(project);
-  gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
-
-  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
-
-  gtk_widget_grab_focus(GTK_WIDGET(view));
-}
-
-...
-
-```
-
-##### macOS
-
-Change the file `macos/Runner/MainFlutterWindow.swift` as follows:
-
-```diff
-import Cocoa
-import FlutterMacOS
-+import window_manager
-
-class MainFlutterWindow: NSWindow {
-    override func awakeFromNib() {
-        let flutterViewController = FlutterViewController.init()
-        let windowFrame = self.frame
-        self.contentViewController = flutterViewController
-        self.setFrame(windowFrame, display: true)
-
-        RegisterGeneratedPlugins(registry: flutterViewController)
-
-        super.awakeFromNib()
-    }
+ class MainFlutterWindow: NSPanel {
+     override func awakeFromNib() {
+         ...
+         RegisterGeneratedPlugins(registry: flutterViewController)
++        MultiWindowManagerPlugin.RegisterGeneratedPlugins = RegisterGeneratedPlugins
+         super.awakeFromNib()
+     }
 
 +    override public func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
 +        super.order(place, relativeTo: otherWin)
 +        hiddenWindowAtLaunch()
 +    }
-}
-
+ }
 ```
 
-##### Windows
-
-Change the file `windows/runner/win32_window.cpp` as follows:
+Edit `macos/Runner/AppDelegate.swift`:
 
 ```diff
-bool Win32Window::CreateAndShow(const std::wstring& title,
-                                const Point& origin,
-                                const Size& size) {
-  ...                              
-  HWND window = CreateWindow(
--      window_class, title.c_str(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-+      window_class, title.c_str(),
-+      WS_OVERLAPPEDWINDOW, // do not add WS_VISIBLE since the window will be shown later
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
-      nullptr, nullptr, GetModuleHandle(nullptr), this);
+ import Cocoa
+ import FlutterMacOS
++import multi_window_manager
+
+ @main
+ class AppDelegate: FlutterAppDelegate {
+   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+-    return true
++    // Close the app only when windows not contains MainFlutterWindow
++    return !NSApp.windows.contains(where: { $0 is MainFlutterWindow })
+   }
+ }
 ```
 
-Since flutter 3.7 new windows project
-Change the file `windows/runner/flutter_window.cpp` as follows:
+---
 
-```diff
-bool FlutterWindow::OnCreate() {
-  ...
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
--   this->Show();
-+   //delete this->Show()
-  });
-```
+## Usage
 
-Make sure to call `setState` once on the `onWindowFocus` event.
+### Initialization
+
+Call `ensureInitialized` once before accessing `MultiWindowManager.current`.
+
+The `args` list passed to `main()` carries the window ID in `args[0]` (absent for the main window).
 
 ```dart
-import 'package:flutter/cupertino.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:flutter/material.dart';
+import 'package:multi_window_manager/multi_window_manager.dart';
 
-class HomePage extends StatefulWidget {
-  @override
-  _HomePageState createState() => _HomePageState();
+void main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final windowId = args.isEmpty ? 0 : int.tryParse(args[0]) ?? 0;
+
+  if (windowId == 0) {
+    // Main window - never participates in the reuse cache.
+    await MultiWindowManager.ensureInitialized(windowId);
+  } else {
+    // Secondary window - optionally enable reuse cache.
+    await MultiWindowManager.ensureInitializedSecondary(
+      windowId,
+      isEnabledReuse: true, // hide instead of destroy on close
+    );
+  }
+
+  WindowOptions windowOptions = const WindowOptions(
+    size: Size(800, 600),
+    center: true,
+    backgroundColor: Colors.transparent,
+    titleBarStyle: TitleBarStyle.hidden,
+  );
+
+  MultiWindowManager.current.waitUntilReadyToShow(windowOptions, () async {
+    await MultiWindowManager.current.show();
+    await MultiWindowManager.current.focus();
+  });
+
+  runApp(const MyApp());
 }
+```
 
-class _HomePageState extends State<HomePage> with WindowListener {
+### Create a window
+
+```dart
+// Spawn a new Flutter engine window, passing optional string arguments.
+final newWindow = await MultiWindowManager.createWindow(['type=dashboard', 'userId=42']);
+if (newWindow != null) {
+  print('Created window ${newWindow.id}');
+}
+```
+
+The arguments are available in `main(List<String> args)` of the new window as `args[1]`, `args[2]`, etc.
+
+### Reuse cached windows
+
+`createWindowOrReuse` avoids spawning a new Flutter engine when a previously-hidden reuse-enabled window is available. Claiming a hidden window is atomic - concurrent calls from different windows cannot pick the same target.
+
+```dart
+// Any window can call this - main or secondary.
+final window = await MultiWindowManager.createWindowOrReuse(
+  args: ['type=dashboard', 'userId=42'],
+);
+```
+
+For a window to participate in the reuse cache:
+
+1. Initialize it with `isEnabledReuse: true` (see [Initialization](#initialization)).
+2. Use `ReuseWindow` as the root widget:
+
+```dart
+// Secondary window entry-point:
+runApp(MaterialApp(
+  home: ReuseWindow(
+    initialArgs: parsedArgs,
+    windowOptions: const WindowOptions(
+      size: Size(1280, 720),
+      center: true,
+      titleBarStyle: TitleBarStyle.hidden,
+    ),
+    loadingBuilder: (context) => const Center(child: CircularProgressIndicator()),
+    builder: (context, args) {
+      // Called on first show AND on every reuse with the latest args.
+      return MyPage(args: args);
+    },
+  ),
+));
+```
+
+When the user closes a `ReuseWindow`, the native layer hides the OS window instead of destroying the Flutter engine. `createWindowOrReuse` can later reclaim it with new args, rebuilding the content without the overhead of creating a new engine.
+
+`setPreventClose` works independently from the reuse mechanism, so inner widgets can still show "are you sure?" dialogs without breaking reuse.
+
+### Communication between windows
+
+```dart
+// Send an event from any window to window with id 1.
+final result = await MultiWindowManager.current.invokeMethodToWindow(
+  1,
+  'showNotification',
+  {'message': 'Hello from window ${MultiWindowManager.current.id}'},
+);
+
+// In window 1 - implement WindowListener.onEventFromWindow:
+class _MyWidgetState extends State<MyWidget> with WindowListener {
   @override
   void initState() {
     super.initState();
-    WindowManagerPlus.current.addListener(this);
+    MultiWindowManager.current.addListener(this);
   }
 
   @override
   void dispose() {
-    WindowManagerPlus.current.removeListener(this);
+    MultiWindowManager.current.removeListener(this);
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    // ...
+  Future<dynamic> onEventFromWindow(
+      String eventName, int fromWindowId, dynamic arguments) async {
+    if (eventName == 'showNotification') {
+      print('Message from $fromWindowId: ${arguments['message']}');
+      return 'acknowledged';
+    }
+    return null;
+  }
+}
+```
+
+To get all registered window IDs:
+
+```dart
+final ids = await MultiWindowManager.getAllWindowManagerIds();
+```
+
+### Window events
+
+```dart
+class _MyWidgetState extends State<MyWidget> with WindowListener {
+  @override
+  void initState() {
+    super.initState();
+    MultiWindowManager.current.addListener(this);
   }
 
   @override
-  void onWindowFocus() {
-    // Make sure to call once.
-    setState(() {});
-    // do something
+  void dispose() {
+    MultiWindowManager.current.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowFocus([int? windowId]) => setState(() {});
+
+  @override
+  void onWindowClose([int? windowId]) { /* ... */ }
+
+  @override
+  void onWindowMaximize([int? windowId]) { /* ... */ }
+
+  @override
+  void onWindowMinimize([int? windowId]) { /* ... */ }
+
+  // Catches every event by name, including reuse events.
+  @override
+  void onWindowEvent(String eventName, [int? windowId]) {
+    print('event: $eventName  window: $windowId');
   }
 }
-
 ```
 
-## Articles
+For **global** listeners (receive events from all windows with `windowId` set):
 
-- [Click the dock icon to restore after closing the window](https://leanflutter.dev/tips-and-tricks/002-click-dock-icon-to-restore-after-closing-the-window/)
-- [Making the app single-instanced](https://leanflutter.dev/tips-and-tricks/001-making-the-app-single-instanced/)
+```dart
+MultiWindowManager.addGlobalListener(myGlobalListener);
+MultiWindowManager.removeGlobalListener(myGlobalListener);
+```
+
+### Window registry
+
+`MultiWindowManager.registry` is a per-isolate reactive view backed by the shared native state. Use it to drive UI that reflects the live window list.
+
+```dart
+// In a widget:
+ValueListenableBuilder<List<int>>(
+  valueListenable: MultiWindowManager.registry.activeWindows,
+  builder: (context, ids, _) => Text('Open windows: $ids'),
+);
+
+ValueListenableBuilder<List<int>>(
+  valueListenable: MultiWindowManager.registry.hiddenWindows,
+  builder: (context, ids, _) => Text('Cached (reusable) windows: $ids'),
+);
+```
+
+For a guaranteed-fresh read bypassing the local cache:
+
+```dart
+final activeIds = await MultiWindowManager.registry.getActiveWindowIds();
+final hiddenIds = await MultiWindowManager.registry.getHiddenWindowIds();
+```
+
+### Confirm before closing
+
+```dart
+class _MyWidgetState extends State<MyWidget> with WindowListener {
+  @override
+  void initState() {
+    super.initState();
+    MultiWindowManager.current.addListener(this);
+    MultiWindowManager.current.setPreventClose(true);
+  }
+
+  @override
+  void dispose() {
+    MultiWindowManager.current.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose([int? windowId]) async {
+    if(!await MultiWindowManager.current.isPreventClose()) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Close window?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await MultiWindowManager.current.setPreventClose(false);
+      await MultiWindowManager.current.close();
+    }
+  }
+}
+```
+
+### Quit on close
+
+#### macOS
+
+```diff
+ override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+-  return true
++  return false
+ }
+```
+
+#### Windows
+
+Set `SetQuitOnClose(false)` for every window (see [Windows setup](#windows-setup)).
+To exit when the main window closes, handle `onWindowClose` and call `exit(0)`.
+
+### Hidden at launch
+
+#### Windows
+
+Edit `windows/runner/win32_window.cpp` to create the window without `WS_VISIBLE`:
+
+```diff
+ HWND window = CreateWindow(
+-    window_class, title.c_str(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
++    window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+     ...);
+```
+
+Edit `windows/runner/flutter_window.cpp` to remove the auto-show:
+
+```diff
+ flutter_controller_->engine()->SetNextFrameCallback([&]() {
+-  this->Show();
+ });
+```
+
+---
 
 ## API
 
 <!-- README_DOC_GEN -->
-### WindowManagerPlus
+### MultiWindowManager
 
-#### Methods
+#### Instance methods
 
-##### [addListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/addListener.html)([WindowListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener-class.html) listener) → void
+##### [addListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/addListener.html)([WindowListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener-class.html) listener) -> void
 
-Add a listener to the window.
+Subscribe to window events for this window.
 
-##### [blur](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/blur.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [removeListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/removeListener.html)([WindowListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener-class.html) listener) -> void
 
-Removes focus from the window.
+Unsubscribe from window events.
 
-##### [center](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/center.html)({[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) animate = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Moves window to the center of the screen.
-
-##### [close](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/close.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Try to close the window.
-
-##### [destroy](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/destroy.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Force closing the window.
-
-##### [dock](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/dock.html)({required [DockSide](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/DockSide.html) side, required [int](https://api.flutter.dev/flutter/dart-core/int-class.html) width}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Docks the window. only works on Windows
-
-##### [focus](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/focus.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Focuses on the window.
-
-##### [getBounds](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getBounds.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[Rect](https://api.flutter.dev/flutter/dart-ui/Rect-class.html)\>
-
-Returns `Rect` - The bounds of the window as Object.
-
-##### [getDevicePixelRatio](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getDevicePixelRatio.html)() → [double](https://api.flutter.dev/flutter/dart-core/double-class.html)
-
-Get the device pixel ratio.
-
-##### [getOpacity](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getOpacity.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[double](https://api.flutter.dev/flutter/dart-core/double-class.html)\>
-
-Returns `double` - between 0.0 (fully transparent) and 1.0 (fully opaque).
-
-##### [getPosition](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getPosition.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[Offset](https://api.flutter.dev/flutter/dart-ui/Offset-class.html)\>
-
-Returns `Offset` - Contains the window's current position.
-
-##### [getSize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getSize.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[Size](https://api.flutter.dev/flutter/dart-ui/Size-class.html)\>
-
-Returns `Size` - Contains the window's width and height.
-
-##### [getTitle](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getTitle.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[String](https://api.flutter.dev/flutter/dart-core/String-class.html)\>
-
-Returns `String` - The title of the native window.
-
-##### [getTitleBarHeight](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getTitleBarHeight.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[int](https://api.flutter.dev/flutter/dart-core/int-class.html)\>
-
-Returns `int` - The title bar height of the native window.
-
-##### [hasShadow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/hasShadow.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window has a shadow. On Windows, always returns true unless window is frameless.
-
-##### [hide](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/hide.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Hides the window.
-
-##### [invokeMethodToWindow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/invokeMethodToWindow.html)([int](https://api.flutter.dev/flutter/dart-core/int-class.html) targetWindowId, [String](https://api.flutter.dev/flutter/dart-core/String-class.html) method, \[dynamic args\]) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)
-
-Invokes a method on the window with id `targetWindowId`. It could return a Future that resolves to the return value of the invoked method, otherwise `null`. Use [WindowListener.onEventFromWindow](https://pub.dev/documentation/window_manager_plus/latest/WindowListener/onEventFromWindow.html) to listen for the event.
-
-##### [isAlwaysOnBottom](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isAlwaysOnBottom.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is always below other windows.
-
-##### [isAlwaysOnTop](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isAlwaysOnTop.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is always on top of other windows.
-
-##### [isClosable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isClosable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window can be manually closed by user.
-
-##### [isDockable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isDockable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is dockable or not.
-
-##### [isDocked](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isDocked.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[DockSide](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/DockSide.html)?\>
-
-Returns `bool` - Whether the window is docked.
-
-##### [isFocused](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isFocused.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether window is focused.
-
-##### [isFullScreen](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isFullScreen.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is in fullscreen mode.
-
-##### [isMaximizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isMaximizable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window can be manually maximized by the user.
-
-##### [isMaximized](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isMaximized.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is maximized.
-
-##### [isMinimizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isMinimizable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window can be manually minimized by the user.
-
-##### [isMinimized](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isMinimized.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is minimized.
-
-##### [isMovable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isMovable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window can be moved by user.
-
-##### [isPreventClose](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isPreventClose.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Check if is intercepting the native close signal.
-
-##### [isResizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isResizable.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window can be manually resized by the user.
-
-##### [isSkipTaskbar](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isSkipTaskbar.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether skipping taskbar is enabled.
-
-##### [isVisible](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isVisible.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is visible to the user.
-
-##### [isVisibleOnAllWorkspaces](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/isVisibleOnAllWorkspaces.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
-
-Returns `bool` - Whether the window is visible on all workspaces.
-
-##### [maximize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/maximize.html)({[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) vertically = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Maximizes the window. `vertically` simulates aero snap, only works on Windows
-
-##### [minimize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/minimize.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Minimizes the window. On some platforms the minimized window will be shown in the Dock.
-
-##### [popUpWindowMenu](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/popUpWindowMenu.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-##### [removeListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/removeListener.html)([WindowListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener-class.html) listener) → void
-
-Remove a listener from the window.
-
-##### [restore](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/restore.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Restores the window from minimized state to its previous state.
-
-##### [setAlignment](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setAlignment.html)([Alignment](https://api.flutter.dev/flutter/painting/Alignment-class.html) alignment, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) animate = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Move the window to a position aligned with the screen.
-
-##### [setAlwaysOnBottom](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setAlwaysOnBottom.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isAlwaysOnBottom) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window should show always below other windows.
-
-##### [setAlwaysOnTop](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setAlwaysOnTop.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isAlwaysOnTop) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window should show always on top of other windows.
-
-##### [setAsFrameless](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setAsFrameless.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-You can call this to remove the window frame (title bar, outline border, etc), which is basically everything except the Flutter view, also can call setTitleBarStyle(TitleBarStyle.normal) or setTitleBarStyle(TitleBarStyle.hidden) to restore it.
-
-##### [setAspectRatio](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setAspectRatio.html)([double](https://api.flutter.dev/flutter/dart-core/double-class.html) aspectRatio) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-This will make a window maintain an aspect ratio.
-
-##### [setBackgroundColor](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setBackgroundColor.html)([Color](https://api.flutter.dev/flutter/dart-ui/Color-class.html) backgroundColor) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets the background color of the window.
-
-##### [setBadgeLabel](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setBadgeLabel.html)(\[[String](https://api.flutter.dev/flutter/dart-core/String-class.html)? label\]) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Set/unset label on taskbar(dock) app icon
-
-##### [setBounds](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setBounds.html)([Rect](https://api.flutter.dev/flutter/dart-ui/Rect-class.html)? bounds, {[Offset](https://api.flutter.dev/flutter/dart-ui/Offset-class.html)? position, [Size](https://api.flutter.dev/flutter/dart-ui/Size-class.html)? size, [bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) animate = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Resizes and moves the window to the supplied bounds.
-
-##### [setBrightness](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setBrightness.html)([Brightness](https://api.flutter.dev/flutter/dart-ui/Brightness.html) brightness) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets the brightness of the window.
-
-##### [setClosable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setClosable.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isClosable) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window can be manually closed by user.
-
-##### [setFullScreen](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setFullScreen.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isFullScreen) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window should be in fullscreen mode.
-
-##### [setHasShadow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setHasShadow.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) hasShadow) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window should have a shadow. On Windows, doesn't do anything unless window is frameless.
-
-##### [setIcon](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setIcon.html)([String](https://api.flutter.dev/flutter/dart-core/String-class.html) iconPath) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets window/taskbar icon.
-
-##### [setIgnoreMouseEvents](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setIgnoreMouseEvents.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) ignore, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) forward = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Makes the window ignore all mouse events.
-
-##### [setMaximizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setMaximizable.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isMaximizable) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window can be manually maximized by the user.
-
-##### [setMaximumSize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setMaximumSize.html)([Size](https://api.flutter.dev/flutter/dart-ui/Size-class.html) size) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets the maximum size of window to `width` and `height`.
-
-##### [setMinimizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setMinimizable.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isMinimizable) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window can be manually minimized by user.
-
-##### [setMinimumSize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setMinimumSize.html)([Size](https://api.flutter.dev/flutter/dart-ui/Size-class.html) size) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets the minimum size of window to `width` and `height`.
-
-##### [setMovable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setMovable.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isMovable) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window can be moved by user.
-
-##### [setOpacity](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setOpacity.html)([double](https://api.flutter.dev/flutter/dart-core/double-class.html) opacity) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets the opacity of the window.
-
-##### [setPosition](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setPosition.html)([Offset](https://api.flutter.dev/flutter/dart-ui/Offset-class.html) position, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) animate = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Moves window to position.
-
-##### [setPreventClose](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setPreventClose.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isPreventClose) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Set if intercept the native close signal. May useful when combine with the onclose event listener. This will also prevent the manually triggered close event.
-
-##### [setProgressBar](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setProgressBar.html)([double](https://api.flutter.dev/flutter/dart-core/double-class.html) progress) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets progress value in progress bar. Valid range is `0, 1.0`.
-
-##### [setResizable](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setResizable.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isResizable) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window can be manually resized by the user.
-
-##### [setSize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setSize.html)([Size](https://api.flutter.dev/flutter/dart-ui/Size-class.html) size, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) animate = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Resizes the window to `width` and `height`.
-
-##### [setSkipTaskbar](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setSkipTaskbar.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) isSkipTaskbar) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Makes the window not show in the taskbar / dock.
-
-##### [setTitle](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setTitle.html)([String](https://api.flutter.dev/flutter/dart-core/String-class.html) title) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Changes the title of native window to title.
-
-##### [setTitleBarStyle](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setTitleBarStyle.html)([TitleBarStyle](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/TitleBarStyle.html) titleBarStyle, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) windowButtonVisibility = true}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Changes the title bar style of native window.
-
-##### [setVisibleOnAllWorkspaces](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/setVisibleOnAllWorkspaces.html)([bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) visible, {[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)? visibleOnFullScreen}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
-
-Sets whether the window should be visible on all workspaces.
-
-##### [show](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/show.html)({[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html) inactive = false}) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [show](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/show.html)({bool inactive = false}) -> Future\<void\>
 
 Shows and gives focus to the window.
 
-##### [startDragging](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/startDragging.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [hide](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/hide.html)() -> Future\<void\>
 
-Starts a window drag based on the specified mouse-down event. On Windows, this is disabled during full screen mode.
+Hides the window.
 
-##### [startResizing](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/startResizing.html)([ResizeEdge](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/ResizeEdge.html) resizeEdge) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [close](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/close.html)() -> Future\<void\>
 
-Starts a window resize based on the specified mouse-down & mouse-move event. On Windows, this is disabled during full screen mode.
+Try to close the window (respects `setPreventClose`).
 
-##### [toString](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/toString.html)() → [String](https://api.flutter.dev/flutter/dart-core/String-class.html)
+##### [destroy](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/destroy.html)() -> Future\<void\>
 
-A string representation of this object.
+Force-close app, bypassing `setPreventClose`.
 
-##### [undock](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/undock.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[bool](https://api.flutter.dev/flutter/dart-core/bool-class.html)\>
+##### [focus](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/focus.html)() -> Future\<void\>
 
-Undocks the window. only works on Windows
+Focuses on the window.
 
-##### [unmaximize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/unmaximize.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [blur](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/blur.html)() -> Future\<void\>
+
+Removes focus from the window.
+
+##### [isFocused](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isFocused.html)() -> Future\<bool\>
+
+Returns whether the window is currently focused.
+
+##### [center](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/center.html)({bool animate = false}) -> Future\<void\>
+
+Moves the window to the center of the screen.
+
+##### [setPosition](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setPosition.html)(Offset position, {bool animate = false}) -> Future\<void\>
+
+Moves the window to a position.
+
+##### [getPosition](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getPosition.html)() -> Future\<Offset\>
+
+Returns the current window position.
+
+##### [setAlignment](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setAlignment.html)(Alignment alignment, {bool animate = false}) -> Future\<void\>
+
+Moves the window to a screen-aligned position.
+
+##### [setSize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setSize.html)(Size size, {bool animate = false}) -> Future\<void\>
+
+Resizes the window.
+
+##### [getSize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getSize.html)() -> Future\<Size\>
+
+Returns the current window size.
+
+##### [setBounds](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setBounds.html)(Rect? bounds, {Offset? position, Size? size, bool animate = false}) -> Future\<void\>
+
+Resizes and moves the window to the supplied bounds.
+
+##### [getBounds](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getBounds.html)() -> Future\<Rect\>
+
+Returns the window bounds as a `Rect`.
+
+##### [setMinimumSize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setMinimumSize.html)(Size size) -> Future\<void\>
+
+Sets the minimum window size.
+
+##### [setMaximumSize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setMaximumSize.html)(Size size) -> Future\<void\>
+
+Sets the maximum window size.
+
+##### [maximize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/maximize.html)({bool vertically = false}) -> Future\<void\>
+
+Maximizes the window. `vertically` simulates aero snap (Windows only).
+
+##### [unmaximize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/unmaximize.html)() -> Future\<void\>
 
 Unmaximizes the window.
 
-##### [waitUntilReadyToShow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/waitUntilReadyToShow.html)(\[[WindowOptions](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowOptions-class.html)? options, [VoidCallback](https://api.flutter.dev/flutter/dart-ui/VoidCallback.html)? callback\]) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+##### [isMaximized](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isMaximized.html)() -> Future\<bool\>
 
-Wait until ready to show.
+Returns whether the window is maximized.
 
-#### Static Methods
+##### [isMaximizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isMaximizable.html)() -> Future\<bool\>
 
-##### [addGlobalListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/addGlobalListener.html)([WindowListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener-class.html) listener) → void
+Returns whether the window can be maximized by the user.
 
-Add a global listener to the window.
+##### [setMaximizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setMaximizable.html)(bool isMaximizable) -> Future\<void\>
 
-##### [createWindow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/createWindow.html)(\[[List](https://api.flutter.dev/flutter/dart-core/List-class.html)<[String](https://api.flutter.dev/flutter/dart-core/String-class.html)\>? args\]) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[WindowManagerPlus](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus-class.html)?\>
+Sets whether the window can be maximized by the user.
 
-Create a new window.
+##### [minimize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/minimize.html)() -> Future\<void\>
 
-##### [ensureInitialized](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/ensureInitialized.html)([int](https://api.flutter.dev/flutter/dart-core/int-class.html) windowId) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<void\>
+Minimizes the window.
 
-Ensure the window manager for this `windowId` is initialized. Must be called before accessing the [WindowManagerPlus.current](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/current.html).
+##### [restore](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/restore.html)() -> Future\<void\>
 
-##### [fromWindowId](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/fromWindowId.html)([int](https://api.flutter.dev/flutter/dart-core/int-class.html) windowId) → [WindowManagerPlus](https://pub.dev/documentation/window_manager_plus/latest/WindowManagerPlus-class.html)
+Restores the window from a minimized state.
 
-Get the window manager from the window id.
+##### [isMinimized](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isMinimized.html)() -> Future\<bool\>
 
-##### [getAllWindowManagerIds](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/getAllWindowManagerIds.html)() → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)<[List](https://api.flutter.dev/flutter/dart-core/List-class.html)<[int](https://api.flutter.dev/flutter/dart-core/int-class.html)\>\>
+Returns whether the window is minimized.
 
-Get all window manager ids.
+##### [isMinimizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isMinimizable.html)() -> Future\<bool\>
 
-##### [removeGlobalListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowManagerPlus/removeGlobalListener.html)([WindowListener](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener-class.html) listener) → void
+Returns whether the window can be minimized by the user.
 
-Remove a global listener from the window.
+##### [setMinimizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setMinimizable.html)(bool isMinimizable) -> Future\<void\>
+
+Sets whether the window can be minimized by the user.
+
+##### [setFullScreen](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setFullScreen.html)(bool isFullScreen) -> Future\<void\>
+
+Sets whether the window should be in full-screen mode.
+
+##### [isFullScreen](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isFullScreen.html)() -> Future\<bool\>
+
+Returns whether the window is in full-screen mode.
+
+##### [isVisible](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isVisible.html)() -> Future\<bool\>
+
+Returns whether the window is visible to the user.
+
+##### [setTitle](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setTitle.html)(String title) -> Future\<void\>
+
+Changes the title of the native window.
+
+##### [getTitle](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getTitle.html)() -> Future\<String\>
+
+Returns the title of the native window.
+
+##### [setTitleBarStyle](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setTitleBarStyle.html)(TitleBarStyle titleBarStyle, {bool windowButtonVisibility = true}) -> Future\<void\>
+
+Changes the title bar style of the native window.
+
+##### [getTitleBarHeight](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getTitleBarHeight.html)() -> Future\<int\>
+
+Returns the title bar height in logical pixels.
+
+##### [setAlwaysOnTop](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setAlwaysOnTop.html)(bool isAlwaysOnTop) -> Future\<void\>
+
+Sets whether the window is always on top of other windows.
+
+##### [isAlwaysOnTop](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isAlwaysOnTop.html)() -> Future\<bool\>
+
+Returns whether the window is always on top.
+
+##### [setAlwaysOnBottom](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setAlwaysOnBottom.html)(bool isAlwaysOnBottom) -> Future\<void\>
+
+Sets whether the window is always below other windows.
+
+##### [isAlwaysOnBottom](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isAlwaysOnBottom.html)() -> Future\<bool\>
+
+Returns whether the window is always on the bottom.
+
+##### [setOpacity](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setOpacity.html)(double opacity) -> Future\<void\>
+
+Sets the window opacity (0.0 fully transparent, 1.0 fully opaque).
+
+##### [getOpacity](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getOpacity.html)() -> Future\<double\>
+
+Returns the current window opacity.
+
+##### [setBackgroundColor](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setBackgroundColor.html)(Color backgroundColor) -> Future\<void\>
+
+Sets the background color of the window.
+
+##### [setPreventClose](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setPreventClose.html)(bool isPreventClose) -> Future\<void\>
+
+Intercepts the native close signal. Use with `onWindowClose` to show a confirmation dialog.
+
+##### [isPreventClose](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isPreventClose.html)() -> Future\<bool\>
+
+Returns whether the native close signal is being intercepted.
+
+##### [setResizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setResizable.html)(bool isResizable) -> Future\<void\>
+
+Sets whether the window can be resized by the user.
+
+##### [isResizable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isResizable.html)() -> Future\<bool\>
+
+Returns whether the window is resizable.
+
+##### [setMovable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setMovable.html)(bool isMovable) -> Future\<void\>
+
+Sets whether the window can be moved by the user.
+
+##### [isMovable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isMovable.html)() -> Future\<bool\>
+
+Returns whether the window is movable.
+
+##### [setClosable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setClosable.html)(bool isClosable) -> Future\<void\>
+
+Sets whether the window can be manually closed by the user.
+
+##### [isClosable](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isClosable.html)() -> Future\<bool\>
+
+Returns whether the window can be closed by the user.
+
+##### [setSkipTaskbar](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setSkipTaskbar.html)(bool isSkipTaskbar) -> Future\<void\>
+
+Makes the window not show in the taskbar / dock.
+
+##### [isSkipTaskbar](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isSkipTaskbar.html)() -> Future\<bool\>
+
+Returns whether the window is hidden from the taskbar.
+
+##### [setHasShadow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setHasShadow.html)(bool hasShadow) -> Future\<void\>
+
+Sets whether the window has a shadow (frameless windows only on Windows).
+
+##### [hasShadow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/hasShadow.html)() -> Future\<bool\>
+
+Returns whether the window has a shadow.
+
+##### [setProgressBar](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setProgressBar.html)(double progress) -> Future\<void\>
+
+Sets the taskbar progress bar value (0.0 to 1.0). Windows only.
+
+##### [setIcon](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setIcon.html)(String iconPath) -> Future\<void\>
+
+Sets the window / taskbar icon.
+
+##### [dock](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/dock.html)({required DockSide side, required int width}) -> Future\<void\>
+
+Docks the window to a screen edge. Windows only.
+
+##### [undock](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/undock.html)() -> Future\<bool\>
+
+Undocks the window. Windows only.
+
+##### [isDocked](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/isDocked.html)() -> Future\<DockSide?\>
+
+Returns the current dock side, or `null` if not docked.
+
+##### [setAsFrameless](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setAsFrameless.html)() -> Future\<void\>
+
+Removes the native window frame (title bar, border, etc.).
+
+##### [setAspectRatio](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setAspectRatio.html)(double aspectRatio) -> Future\<void\>
+
+Locks the window to a fixed aspect ratio.
+
+##### [setBrightness](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setBrightness.html)(Brightness brightness) -> Future\<void\>
+
+Sets the brightness (light/dark) of the window.
+
+##### [setIgnoreMouseEvents](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/setIgnoreMouseEvents.html)(bool ignore, {bool forward = false}) -> Future\<void\>
+
+Makes the window ignore all mouse events.
+
+##### [popUpWindowMenu](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/popUpWindowMenu.html)() -> Future\<void\>
+
+Pops up the native window menu.
+
+##### [startDragging](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/startDragging.html)() -> Future\<void\>
+
+Starts a window drag from a custom title bar widget.
+
+##### [startResizing](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/startResizing.html)(ResizeEdge resizeEdge) -> Future\<void\>
+
+Starts a window resize from a custom border widget.
+
+##### [waitUntilReadyToShow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/waitUntilReadyToShow.html)([WindowOptions? options, VoidCallback? callback]) -> Future\<void\>
+
+Applies `WindowOptions` and calls `callback` once the window is ready to display.
+
+##### [invokeMethodToWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/invokeMethodToWindow.html)(int targetWindowId, String method, [dynamic args]) -> Future
+
+Sends an event to another window. The result is the return value of `WindowListener.onEventFromWindow` in the target window.
+
+##### [getDevicePixelRatio](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getDevicePixelRatio.html)() -> double
+
+Returns the device pixel ratio for this window.
+
+##### [toString](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/toString.html)() -> String
+
+Returns a string representation including the window ID.
+
+#### Static methods
+
+##### [ensureInitialized](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/ensureInitialized.html)(int windowId) -> Future\<void\>
+
+Initialize for the main window (`windowId = 0`). Must be called before accessing `MultiWindowManager.current`.
+
+##### [ensureInitializedSecondary](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/ensureInitializedSecondary.html)(int windowId, {bool isEnabledReuse = false}) -> Future\<void\>
+
+Initialize for a secondary window. Set `isEnabledReuse: true` to enable the reuse cache for this window.
+
+##### [createWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/createWindow.html)([List\<String\>? args]) -> Future\<MultiWindowManager?\>
+
+Spawns a new window. Returns a `MultiWindowManager` instance for the new window, or `null` on failure.
+
+##### [createWindowOrReuse](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/createWindowOrReuse.html)({List\<String\>? args}) -> Future\<MultiWindowManager?\>
+
+Atomically claims a hidden reuse-cached window and reinitializes it with `args`, or spawns a new one if none are available. Safe to call from any window (main or secondary).
+
+##### [fromWindowId](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/fromWindowId.html)(int windowId) -> MultiWindowManager
+
+Returns a `MultiWindowManager` instance for any registered window by ID.
+
+##### [getAllWindowManagerIds](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/getAllWindowManagerIds.html)() -> Future\<List\<int\>\>
+
+Returns the IDs of all windows currently registered in the process.
+
+##### [addGlobalListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/addGlobalListener.html)([WindowListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener-class.html) listener) -> void
+
+Subscribes to events from **all** windows. The `windowId` parameter in callbacks identifies the source window.
+
+##### [removeGlobalListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/removeGlobalListener.html)([WindowListener](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener-class.html) listener) -> void
+
+Unsubscribes a global listener.
+
+##### [registry](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/MultiWindowManager/registry.html) -> [WindowRegistry](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry-class.html)
+
+Process-wide reactive window registry. See [WindowRegistry](#windowregistry-1).
+
+---
 
 ### WindowListener
 
-#### Methods
+Mixin used with `addListener` / `addGlobalListener`. When used as a global listener, `windowId` identifies the source window; when used as a local listener it is always `null`.
 
-##### [onEventFromWindow](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onEventFromWindow.html)([String](https://api.flutter.dev/flutter/dart-core/String-class.html) eventName, [int](https://api.flutter.dev/flutter/dart-core/int-class.html) fromWindowId, dynamic arguments) → [Future](https://api.flutter.dev/flutter/dart-async/Future-class.html)
-
-Event from other windows.
-
-##### [onWindowBlur](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowBlur.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted when the window loses focus.
-
-##### [onWindowClose](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowClose.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowClose](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowClose.html)([int? windowId]) -> void
 
 Emitted when the window is going to be closed.
 
-##### [onWindowDocked](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowDocked.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted when the window entered a docked state.
-
-##### [onWindowEnterFullScreen](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowEnterFullScreen.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted when the window enters a full-screen state.
-
-##### [onWindowEvent](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowEvent.html)([String](https://api.flutter.dev/flutter/dart-core/String-class.html) eventName, \[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted all events.
-
-##### [onWindowFocus](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowFocus.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowFocus](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowFocus.html)([int? windowId]) -> void
 
 Emitted when the window gains focus.
 
-##### [onWindowLeaveFullScreen](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowLeaveFullScreen.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowBlur](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowBlur.html)([int? windowId]) -> void
 
-Emitted when the window leaves a full-screen state.
+Emitted when the window loses focus.
 
-##### [onWindowMaximize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowMaximize.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowMaximize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowMaximize.html)([int? windowId]) -> void
 
-Emitted when window is maximized.
+Emitted when the window is maximized.
 
-##### [onWindowMinimize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowMinimize.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowUnmaximize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowUnmaximize.html)([int? windowId]) -> void
+
+Emitted when the window exits a maximized state.
+
+##### [onWindowMinimize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowMinimize.html)([int? windowId]) -> void
 
 Emitted when the window is minimized.
 
-##### [onWindowMove](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowMove.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted when the window is being moved to a new position.
-
-##### [onWindowMoved](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowMoved.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted once when the window is moved to a new position.
-
-##### [onWindowResize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowResize.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted after the window has been resized.
-
-##### [onWindowResized](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowResized.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
-
-Emitted once when the window has finished being resized.
-
-##### [onWindowRestore](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowRestore.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowRestore](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowRestore.html)([int? windowId]) -> void
 
 Emitted when the window is restored from a minimized state.
 
-##### [onWindowUndocked](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowUndocked.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowResize](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowResize.html)([int? windowId]) -> void
 
-Emitted when the window leaves a docked state.
+Emitted while the window is being resized.
 
-##### [onWindowUnmaximize](https://pub.dev/documentation/window_manager_plus/latest/window_manager_plus/WindowListener/onWindowUnmaximize.html)(\[[int](https://api.flutter.dev/flutter/dart-core/int-class.html)? windowId\]) → void
+##### [onWindowResized](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowResized.html)([int? windowId]) -> void
 
-Emitted when the window exits from a maximized state.
+Emitted once when the window finishes resizing. Windows / macOS only.
+
+##### [onWindowMove](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowMove.html)([int? windowId]) -> void
+
+Emitted while the window is being moved.
+
+##### [onWindowMoved](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowMoved.html)([int? windowId]) -> void
+
+Emitted once when the window finishes moving. Windows / macOS only.
+
+##### [onWindowEnterFullScreen](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowEnterFullScreen.html)([int? windowId]) -> void
+
+Emitted when the window enters full-screen mode.
+
+##### [onWindowLeaveFullScreen](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowLeaveFullScreen.html)([int? windowId]) -> void
+
+Emitted when the window leaves full-screen mode.
+
+##### [onWindowDocked](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowDocked.html)([int? windowId]) -> void
+
+Emitted when the window enters a docked state. Windows only.
+
+##### [onWindowUndocked](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowUndocked.html)([int? windowId]) -> void
+
+Emitted when the window leaves a docked state. Windows only.
+
+##### [onWindowEvent](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onWindowEvent.html)(String eventName, [int? windowId]) -> void
+
+Emitted for every window event, including reuse lifecycle events.
+
+##### [onEventFromWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onEventFromWindow.html)(String eventName, int fromWindowId, dynamic arguments) -> Future
+
+Receives inter-window messages sent via `invokeMethodToWindow`. The return value is forwarded back to the caller.
+
+---
+
+### WindowRegistry
+
+Accessible via `MultiWindowManager.registry`. Backed by shared native C++ state, so it is consistent across all Flutter engines in the process.
+
+##### [activeWindows](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/activeWindows.html) -> ValueNotifier\<List\<int\>\>
+
+IDs of currently visible / active windows. Updated automatically on every lifecycle event.
+
+##### [hiddenWindows](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/hiddenWindows.html) -> ValueNotifier\<List\<int\>\>
+
+IDs of reuse-cached hidden windows available for reclaiming. Updated automatically.
+
+##### [hasHiddenWindows](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/hasHiddenWindows.html) -> bool
+
+Whether at least one reusable window is available (reflects the last `refresh` result).
+
+##### [getActiveWindowIds](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/getActiveWindowIds.html)() -> Future\<List\<int\>\>
+
+Queries the native layer directly. Always returns a fresh value.
+
+##### [getHiddenWindowIds](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/getHiddenWindowIds.html)() -> Future\<List\<int\>\>
+
+Queries the native layer directly. Always returns a fresh value.
+
+##### [refresh](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowRegistry/refresh.html)() -> Future\<void\>
+
+Re-queries native state and updates `activeWindows` and `hiddenWindows`. Called automatically by `MultiWindowManager` on every lifecycle event.
 
 <!-- README_DOC_GEN -->
 
-## Contributors
-
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-
-<!-- markdownlint-restore -->
-<!-- prettier-ignore-end -->
-
-<!-- ALL-CONTRIBUTORS-LIST:END -->
+---
 
 ## License
 
