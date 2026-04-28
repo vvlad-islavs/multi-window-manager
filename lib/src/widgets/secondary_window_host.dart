@@ -1,12 +1,12 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:window_manager_plus/src/title_bar_style.dart';
-import 'package:window_manager_plus/src/window_listener.dart';
-import 'package:window_manager_plus/src/window_manager.dart';
-import 'package:window_manager_plus/src/window_options.dart';
+import 'package:multi_window_manager/src/title_bar_style.dart';
+import 'package:multi_window_manager/src/window_listener.dart';
+import 'package:multi_window_manager/src/window_manager.dart';
+import 'package:multi_window_manager/src/window_options.dart';
 
 /// Generic host widget for **secondary windows** in a multi-window setup.
 ///
@@ -16,19 +16,19 @@ import 'package:window_manager_plus/src/window_options.dart';
 /// - **Initial display**: calls [waitUntilReadyToShow] with [windowOptions].
 /// - **Hide instead of close**: relies on the native [kWindowEventReuseClose]
 ///   mechanism (enabled by passing `isEnabledReuse: true` to
-///   [WindowManagerPlus.ensureInitialized]).  The native WM_CLOSE handler
+///   [MultiWindowManager.ensureInitialized]).  The native WM_CLOSE handler
 ///   hides the window and emits [kWindowEventReuseClose] globally so the main
-///   window registry is updated automatically — **without touching
+///   window registry is updated automatically - **without touching
 ///   [setPreventClose]**.  This means inner widgets can use [setPreventClose]
 ///   freely for their own "are you sure?" dialogs.
 /// - **Reuse**: on [kWindowEventShowWindow] (sent by
-///   [WindowManagerPlus.createWindowOrReuse]) the window repositions/shows
+///   [MultiWindowManager.createWindowOrReuse]) the window repositions/shows
 ///   itself and rebuilds via [builder] with the new args.
 ///
 /// ### Usage (secondary window entry-point)
 /// ```dart
 /// // In ensureInitialized (secondary window main):
-/// await WindowManagerPlus.ensureInitialized(id, isEnabledReuse: true);
+/// await MultiWindowManager.ensureInitialized(id, isEnabledReuse: true);
 ///
 /// // Then run:
 /// runApp(
@@ -76,9 +76,9 @@ class SecondaryWindowHost extends StatefulWidget {
   /// Called to build the content of the window.
   ///
   /// Parameters:
-  /// - [context]       – current build context.
-  /// - [args]          – current raw args (updated on every reuse).
-  /// - [isInitialized] – `false` while [waitUntilReadyToShow] is in progress
+  /// - [context]       - current build context.
+  /// - [args]          - current raw args (updated on every reuse).
+  /// - [isInitialized] - `false` while [waitUntilReadyToShow] is in progress
   ///   or while the window is hidden for reuse; use this to show a placeholder.
   final Widget Function(BuildContext context, dynamic args) builder;
 
@@ -90,10 +90,10 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
   dynamic _currentArgs;
   bool _isInitialized = false;
 
-  // ── Separate internal listener ───────────────────────────────────────────
+  // Separate internal listener.
   // Using a dedicated private listener object means this host widget does NOT
   // implement WindowListener itself.  Inner widgets added via
-  // WindowManagerPlus.current.addListener() are unaffected: their
+  // MultiWindowManager.current.addListener() are unaffected: their
   // onWindowClose callbacks and setPreventClose state are never touched.
   late final _SecondaryReuseListener _listener;
 
@@ -104,7 +104,7 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
       onReuseClose: _onReuseClose,
       onShowWindow: _onShowWindow,
     );
-    WindowManagerPlus.current.addListener(_listener);
+    MultiWindowManager.current.addListener(_listener);
     _currentArgs = widget.initialArgs;
     _showWindow();
   }
@@ -114,10 +114,10 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
   Future<void> _showWindow() async {
     if (mounted && _isInitialized) setState(() => _isInitialized = false);
 
-    await WindowManagerPlus.current.waitUntilReadyToShow(widget.windowOptions,
+    await MultiWindowManager.current.waitUntilReadyToShow(widget.windowOptions,
         () async {
-      await WindowManagerPlus.current.show();
-      await WindowManagerPlus.current.focus();
+      await MultiWindowManager.current.show();
+      await MultiWindowManager.current.focus();
     });
 
     if (mounted) setState(() => _isInitialized = true);
@@ -131,7 +131,7 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
       _forceWindowsRepaint();
     }
 
-    log('SecondaryWindowHost: window ${WindowManagerPlus.current.id} shown',
+    log('SecondaryWindowHost: window ${MultiWindowManager.current.id} shown',
         name: 'SecondaryWindowHost');
   }
 
@@ -141,20 +141,20 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
     if (!Platform.isWindows) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      final size = await WindowManagerPlus.current.getSize();
-      await WindowManagerPlus.current.setSize(size + const Offset(0, 1));
-      await WindowManagerPlus.current.setSize(size);
+      final size = await MultiWindowManager.current.getSize();
+      await MultiWindowManager.current.setSize(size + const Offset(0, 1));
+      await MultiWindowManager.current.setSize(size);
     });
   }
 
-  // ── Callbacks forwarded from [_SecondaryReuseListener] ──────────────────
+  // Callbacks forwarded from [_SecondaryReuseListener]
 
   /// Called when the native [kWindowEventReuseClose] event is received.
   ///
   /// Resets [_isInitialized] so the placeholder is shown until the next reuse.
   void _onReuseClose() {
     if (mounted) setState(() => _isInitialized = false);
-    log('SecondaryWindowHost: window ${WindowManagerPlus.current.id} closed for reuse',
+    log('SecondaryWindowHost: window ${MultiWindowManager.current.id} closed for reuse',
         name: 'SecondaryWindowHost');
   }
 
@@ -165,11 +165,11 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
     await _showWindow();
   }
 
-  // ── Widget ───────────────────────────────────────────────────────────────
+  // Widget
 
   @override
   void dispose() {
-    WindowManagerPlus.current.removeListener(_listener);
+    MultiWindowManager.current.removeListener(_listener);
     super.dispose();
   }
 
@@ -186,15 +186,15 @@ class SecondaryWindowHostState extends State<SecondaryWindowHost> {
           );
 }
 
-// ── Private listener ─────────────────────────────────────────────────────────
+// Private listener
 
 /// Internal [WindowListener] used exclusively by [SecondaryWindowHostState].
 ///
 /// Handles only two events:
-/// - [kWindowEventReuseClose] (via [onWindowEvent]) — the native WM_CLOSE was
+/// - [kWindowEventReuseClose] (via [onWindowEvent]) - the native WM_CLOSE was
 ///   intercepted by the reuse mechanism; the window is now hidden.
-/// - [kWindowEventShowWindow] (via [onEventFromWindow]) — the main window is
-///   asking this window to reinitialize and show with new args.
+/// - [kWindowEventShowWindow] (via [onEventFromWindow]) - any window is asking
+///   this window to reinitialize and show with new args.
 ///
 /// Deliberately does **not** override [onWindowClose], so inner widgets that
 /// call [setPreventClose] and implement their own close-confirmation dialogs
@@ -221,7 +221,7 @@ class _SecondaryReuseListener with WindowListener {
   @override
   Future<dynamic> onEventFromWindow(
       String eventName, int fromWindowId, dynamic arguments) async {
-    if (fromWindowId == 0 && eventName == kWindowEventShowWindow) {
+    if (eventName == kWindowEventShowWindow) {
       debugPrint('dfbfd');
       await onShowWindow(arguments);
       return null;

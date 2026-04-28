@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:window_manager_plus/window_manager_plus.dart';
-import 'package:window_manager_plus_example/pages/home.dart';
-import 'package:window_manager_plus_example/utils/config.dart';
+import 'package:multi_window_manager/multi_window_manager.dart';
+import 'package:multi_window_manager_example/pages/home.dart';
+import 'package:multi_window_manager_example/utils/config.dart';
 
 void main(List<String> args) async {
   if (kDebugMode) {
@@ -18,8 +18,8 @@ void main(List<String> args) async {
   final Map<String, dynamic> argsMap =
       args.isEmpty ? {} : {'arg1': args[1], 'arg2': args[2]};
   windowId == 0
-      ? await WindowManagerPlus.ensureInitialized(windowId)
-      : await WindowManagerPlus.ensureInitializedSecondary(
+      ? await MultiWindowManager.ensureInitialized(windowId)
+      : await MultiWindowManager.ensureInitializedSecondary(
           windowId,
           isEnabledReuse: true,
         );
@@ -31,11 +31,11 @@ void main(List<String> args) async {
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
     windowButtonVisibility: false,
-    title: 'Window ID ${WindowManagerPlus.current.id}',
+    title: 'Window ID ${MultiWindowManager.current.id}',
   );
-  WindowManagerPlus.current.waitUntilReadyToShow(windowOptions, () async {
-    await WindowManagerPlus.current.show();
-    await WindowManagerPlus.current.focus();
+  MultiWindowManager.current.waitUntilReadyToShow(windowOptions, () async {
+    await MultiWindowManager.current.show();
+    await MultiWindowManager.current.focus();
   });
 
   runApp(MyApp(
@@ -98,7 +98,7 @@ class _MyAppState extends State<MyApp> {
                 skipTaskbar: false,
                 titleBarStyle: TitleBarStyle.hidden,
                 windowButtonVisibility: false,
-                title: 'Window ID ${WindowManagerPlus.current.id}',
+                title: 'Window ID ${MultiWindowManager.current.id}',
               ),
               loadingBuilder: (context) => const Center(
                 child: SizedBox(

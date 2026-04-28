@@ -1,10 +1,10 @@
 {
   "roots": [
-    "window_manager_plus"
+    "multi_window_manager"
   ],
   "packages": [
     {
-      "name": "window_manager_plus",
+      "name": "multi_window_manager",
       "version": "1.0.5",
       "dependencies": [
         "flutter",

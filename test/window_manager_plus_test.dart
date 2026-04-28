@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:window_manager_plus/window_manager_plus.dart';
+import 'package:multi_window_manager/multi_window_manager.dart';
 
 void main() {
 

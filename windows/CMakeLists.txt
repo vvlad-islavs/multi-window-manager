@@ -1,15 +1,15 @@
 cmake_minimum_required(VERSION 3.15)
-set(PROJECT_NAME "window_manager_plus")
+set(PROJECT_NAME "multi_window_manager")
 project(${PROJECT_NAME} LANGUAGES CXX)
 
 # This value is used when generating builds using this plugin, so it must
 # not be changed
-set(PLUGIN_NAME "window_manager_plus_plugin")
+set(PLUGIN_NAME "multi_window_manager_plugin")
 
 add_library(${PLUGIN_NAME} SHARED
-  "window_manager_plus.cpp"
-  "window_manager_plus.h"
-  "window_manager_plus_plugin.cpp"
+  "multi_window_manager.cpp"
+  "multi_window_manager.h"
+  "multi_window_manager_plugin.cpp"
 )
 apply_standard_settings(${PLUGIN_NAME})
 set_target_properties(${PLUGIN_NAME} PROPERTIES
@@ -21,7 +21,7 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
 
 # List of absolute paths to libraries that should be bundled with the plugin
-set(window_manager_bundled_libraries
+set(multi_window_manager_bundled_libraries
   ""
   PARENT_SCOPE
 )

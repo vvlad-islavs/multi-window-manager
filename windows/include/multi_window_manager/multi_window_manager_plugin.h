@@ -1,5 +1,5 @@
-#ifndef FLUTTER_PLUGIN_WINDOW_MANAGER_PLUS_PLUGIN_H_
-#define FLUTTER_PLUGIN_WINDOW_MANAGER_PLUS_PLUGIN_H_
+#ifndef FLUTTER_PLUGIN_MULTI_WINDOW_MANAGER_PLUGIN_H_
+#define FLUTTER_PLUGIN_MULTI_WINDOW_MANAGER_PLUGIN_H_
 
 #include <any>
 #include <map>
@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-FLUTTER_PLUGIN_EXPORT void WindowManagerPlusPluginRegisterWithRegistrar(
+FLUTTER_PLUGIN_EXPORT void MultiWindowManagerPluginRegisterWithRegistrar(
     FlutterDesktopPluginRegistrarRef registrar);
 
 #ifndef RUNNER_FLUTTER_WINDOW_H_
@@ -34,13 +34,13 @@ class FlutterWindow {
 #endif  // RUNNER_FLUTTER_WINDOW_H_
 
 typedef std::shared_ptr<FlutterWindow> (
-    *WindowManagerPlusPluginWindowCreatedCallback)(
+    *MultiWindowManagerPluginWindowCreatedCallback)(
     std::vector<std::string> command_line_arguments);
-FLUTTER_PLUGIN_EXPORT void WindowManagerPlusPluginSetWindowCreatedCallback(
-    WindowManagerPlusPluginWindowCreatedCallback callback);
+FLUTTER_PLUGIN_EXPORT void MultiWindowManagerPluginSetWindowCreatedCallback(
+    MultiWindowManagerPluginWindowCreatedCallback callback);
 
 #if defined(__cplusplus)
 }  // extern "C"
 #endif
 
-#endif  // FLUTTER_PLUGIN_WINDOW_MANAGER_PLUS_PLUGIN_H_
+#endif  // FLUTTER_PLUGIN_MULTI_WINDOW_MANAGER_PLUGIN_H_

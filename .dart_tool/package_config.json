@@ -308,7 +308,7 @@
       "languageVersion": "3.4"
     },
     {
-      "name": "window_manager_plus",
+      "name": "multi_window_manager",
       "rootUri": "../",
       "packageUri": "lib/",
       "languageVersion": "3.0"

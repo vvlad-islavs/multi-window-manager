@@ -1,9 +1,9 @@
-import 'package:window_manager_plus/src/window_manager.dart';
+import 'package:multi_window_manager/src/window_manager.dart';
 
 /// The `WindowListener` mixin class is used to listen to window events.
-/// If this is used as a Global Listener using the [WindowManagerPlus.addGlobalListener] static method,
+/// If this is used as a Global Listener using the [MultiWindowManager.addGlobalListener] static method,
 /// the `windowId` parameter will be the ID of the window that emitted the event,
-/// otherwise, it will be always `null`.
+/// otherwise it will always be `null`.
 abstract mixin class WindowListener {
   /// Emitted when the window is going to be closed.
   void onWindowClose([int? windowId]) {}

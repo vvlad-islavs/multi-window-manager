@@ -2,10 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:window_manager_plus/src/resize_edge.dart';
-import 'package:window_manager_plus/src/widgets/drag_to_resize_area.dart';
-import 'package:window_manager_plus/src/window_listener.dart';
-import 'package:window_manager_plus/src/window_manager.dart';
+import 'package:multi_window_manager/src/resize_edge.dart';
+import 'package:multi_window_manager/src/widgets/drag_to_resize_area.dart';
+import 'package:multi_window_manager/src/window_listener.dart';
+import 'package:multi_window_manager/src/window_manager.dart';
 
 final _kIsLinux = !kIsWeb && Platform.isLinux;
 final _kIsWindows = !kIsWeb && Platform.isWindows;
@@ -31,13 +31,13 @@ class _VirtualWindowFrameState extends State<VirtualWindowFrame>
 
   @override
   void initState() {
-    WindowManagerPlus.current.addListener(this);
+    MultiWindowManager.current.addListener(this);
     super.initState();
   }
 
   @override
   void dispose() {
-    WindowManagerPlus.current.removeListener(this);
+    MultiWindowManager.current.removeListener(this);
     super.dispose();
   }
 

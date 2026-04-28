@@ -1,5 +1,5 @@
-name: window_manager_plus
-description: This plugin allows Flutter desktop apps to create and manage multiple windows, such as resizing and repositioning, and communicate between them.
+name: multi_window_manager
+description: Flutter desktop plugin for creating and managing multiple windows, including resizing, repositioning, and inter-window communication.
 version: 1.0.5
 homepage: https://github.com/pichillilorenzo/window_manager_plus
 repository: https://github.com/pichillilorenzo/window_manager_plus
@@ -37,8 +37,8 @@ flutter:
   plugin:
     platforms:
       #linux:
-      #  pluginClass: WindowManagerPlusPlugin
+      #  pluginClass: MultiWindowManagerPlugin
       macos:
-        pluginClass: WindowManagerPlusPlugin
+        pluginClass: MultiWindowManagerPlugin
       windows:
-        pluginClass: WindowManagerPlusPlugin
+        pluginClass: MultiWindowManagerPlugin

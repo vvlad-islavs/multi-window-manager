@@ -1,5 +1,5 @@
-name: window_manager_plus_example
-description: Demonstrates how to use the window_manager_plus plugin.
+name: multi_window_manager_example
+description: Demonstrates how to use the multi_window_manager plugin.
 publish_to: "none"
 
 environment:
@@ -12,7 +12,7 @@ dependencies:
     sdk: flutter
   preference_list: ^0.0.2
   tray_manager: ^0.2.4
-  window_manager_plus:
+  multi_window_manager:
     path: ../
 
 #  flutter_map: ^8.2.1

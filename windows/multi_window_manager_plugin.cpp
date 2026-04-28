@@ -1,4 +1,4 @@
-#include "include/window_manager_plus/window_manager_plus_plugin.h"
+﻿#include "include/multi_window_manager/multi_window_manager_plugin.h"
 
 // This must be included before many other Windows headers.
 #include <windows.h>
@@ -15,9 +15,9 @@
 #include <sstream>
 #include <thread>
 
-#include "window_manager_plus.h"
+#include "multi_window_manager.h"
 
-namespace window_manager_plus {
+namespace multi_window_manager {
 
     bool IsWindows11OrGreater() {
         DWORD dwVersion = 0;
@@ -36,16 +36,16 @@ namespace window_manager_plus {
 
 //std::mutex threadMtx;
 
-    class WindowManagerPlusPlugin : public flutter::Plugin {
+    class MultiWindowManagerPlugin : public flutter::Plugin {
     public:
         static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
 
-        WindowManagerPlusPlugin(flutter::PluginRegistrarWindows* registrar);
+        MultiWindowManagerPlugin(flutter::PluginRegistrarWindows* registrar);
 
-        virtual ~WindowManagerPlusPlugin();
+        virtual ~MultiWindowManagerPlugin();
 
     private:
-        std::shared_ptr<WindowManagerPlus> window_manager;
+        std::shared_ptr<MultiWindowManager> window_manager;
         flutter::PluginRegistrarWindows* registrar;
         // Kept alive so hot restart can call ensureInitialized on this channel again
         std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
@@ -54,10 +54,10 @@ namespace window_manager_plus {
         // The ID of the WindowProc delegate registration.
         int window_proc_id = -1;
 
-        void WindowManagerPlusPlugin::_EmitEvent(std::string eventName);
-        void WindowManagerPlusPlugin::_EmitGlobalEvent(std::string eventName);
+        void MultiWindowManagerPlugin::_EmitEvent(std::string eventName);
+        void MultiWindowManagerPlugin::_EmitGlobalEvent(std::string eventName);
         // Called for top-level WindowProc delegation.
-        std::optional<LRESULT> WindowManagerPlusPlugin::HandleWindowProc(
+        std::optional<LRESULT> MultiWindowManagerPlugin::HandleWindowProc(
                 HWND hWnd,
                 UINT message,
                 WPARAM wParam,
@@ -102,20 +102,20 @@ namespace window_manager_plus {
     };
 
 // static
-    void WindowManagerPlusPlugin::RegisterWithRegistrar(
+    void MultiWindowManagerPlugin::RegisterWithRegistrar(
             flutter::PluginRegistrarWindows* registrar) {
-        auto plugin = std::make_unique<WindowManagerPlusPlugin>(registrar);
+        auto plugin = std::make_unique<MultiWindowManagerPlugin>(registrar);
 
         registrar->AddPlugin(std::move(plugin));
     }
 
-    WindowManagerPlusPlugin::WindowManagerPlusPlugin(
+    MultiWindowManagerPlugin::MultiWindowManagerPlugin(
             flutter::PluginRegistrarWindows* registrar)
             : registrar(registrar) {
-        window_manager = std::make_shared<WindowManagerPlus>();
+        window_manager = std::make_shared<MultiWindowManager>();
         window_manager->static_channel =
                 std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-                        registrar->messenger(), "window_manager_plus_static",
+                        registrar->messenger(), "multi_window_manager_static",
                                 &flutter::StandardMethodCodec::GetInstance());
         window_manager->static_channel->SetMethodCallHandler(
                 [](const auto& call, auto result) {
@@ -123,7 +123,7 @@ namespace window_manager_plus {
                 });
         bootstrap_channel_ =
                 std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-                        registrar->messenger(), "window_manager_plus",
+                        registrar->messenger(), "multi_window_manager",
                                 &flutter::StandardMethodCodec::GetInstance());
         bootstrap_channel_->SetMethodCallHandler(
                 [this](const auto& call, auto result) {
@@ -137,7 +137,7 @@ namespace window_manager_plus {
                 });
     }
 
-    WindowManagerPlusPlugin::~WindowManagerPlusPlugin() {
+    MultiWindowManagerPlugin::~MultiWindowManagerPlugin() {
 #ifndef NDEBUG
         std::cout << "WindowManagerPlugin dealloc" << std::endl;
 #endif
@@ -147,16 +147,16 @@ namespace window_manager_plus {
         window_manager->channel = nullptr;
 
         auto id = window_manager->id;
-        if (WindowManagerPlus::windowManagers_.find(id) !=
-            WindowManagerPlus::windowManagers_.end()) {
-            WindowManagerPlus::windowManagers_.erase(id);
+        if (MultiWindowManager::windowManagers_.find(id) !=
+            MultiWindowManager::windowManagers_.end()) {
+            MultiWindowManager::windowManagers_.erase(id);
         }
-        if (WindowManagerPlus::windows_.find(id) !=
-            WindowManagerPlus::windows_.end()) {
-            //    WindowManagerPlus::windows_[id]->Destroy();
+        if (MultiWindowManager::windows_.find(id) !=
+            MultiWindowManager::windows_.end()) {
+            //    MultiWindowManager::windows_[id]->Destroy();
             //    // calling WindowManager::windows_.erase(id); will cause a crash
             //    std::thread([&]() {
-            // Do not call Destroy() here — the window is already closing,
+            // Do not call Destroy() here - the window is already closing,
             // calling Destroy() on a window mid-destruction causes a double-destroy crash.
             // Capture id by value (not [&]) to avoid dangling reference after destructor returns.
 
@@ -165,9 +165,9 @@ namespace window_manager_plus {
             //      std::this_thread::sleep_for(std::chrono::milliseconds(100));
             //      threadMtx.lock();
             //          std::cout << "LockStart" << std::endl;
-            //      if (WindowManagerPlus::windows_.find(id) !=
-            //          WindowManagerPlus::windows_.end()) {
-            //        WindowManagerPlus::windows_.erase(id);
+            //      if (MultiWindowManager::windows_.find(id) !=
+            //          MultiWindowManager::windows_.end()) {
+            //        MultiWindowManager::windows_.erase(id);
             //      }
             //      std::cout << "LockMid" << std::endl;
             //      threadMtx.unlock();
@@ -181,11 +181,11 @@ namespace window_manager_plus {
             // call stack, leaving a dangling `this` and causing a crash.
             // Defer release to the next main-thread call (createWindow or
             // getAllWindowManagerIds) where the call stack is clean.
-            WindowManagerPlus::pendingWindowCleanup_.push_back(id);
+            MultiWindowManager::pendingWindowCleanup_.push_back(id);
         }
     }
 
-    void WindowManagerPlusPlugin::_EmitEvent(std::string eventName) {
+    void MultiWindowManagerPlugin::_EmitEvent(std::string eventName) {
         if (window_manager == nullptr || window_manager->channel == nullptr)
             return;
         flutter::EncodableMap args = flutter::EncodableMap();
@@ -197,8 +197,8 @@ namespace window_manager_plus {
         _EmitGlobalEvent(eventName);
     }
 
-    void WindowManagerPlusPlugin::_EmitGlobalEvent(std::string eventName) {
-        for (auto wManagerPair : WindowManagerPlus::windowManagers_) {
+    void MultiWindowManagerPlugin::_EmitGlobalEvent(std::string eventName) {
+        for (auto wManagerPair : MultiWindowManager::windowManagers_) {
             if (wManagerPair.second->channel) {
                 wManagerPair.second->channel->InvokeMethod(
                         "onEvent",
@@ -211,7 +211,7 @@ namespace window_manager_plus {
         }
     }
 
-    std::optional<LRESULT> WindowManagerPlusPlugin::HandleWindowProc(
+    std::optional<LRESULT> MultiWindowManagerPlugin::HandleWindowProc(
             HWND hWnd,
             UINT message,
             WPARAM wParam,
@@ -412,7 +412,7 @@ namespace window_manager_plus {
                 // Fire "reuse-close" locally (for SecondaryWindowHost) and globally
                 // (so the main window registry calls markHidden).
                 // onWindowClose() is dispatched in Dart via the funcMap entry
-                // kWindowEventReuseClose → listener.onWindowClose — no extra native
+                // kWindowEventReuseClose -> listener.onWindowClose - no extra native
                 // event needed.
                 _EmitEvent("reuse-close");
                 _EmitGlobalEvent("reuse-close");
@@ -425,6 +425,11 @@ namespace window_manager_plus {
         } else if (message == WM_SHOWWINDOW) {
             if (wParam == TRUE) {
                 _EmitEvent("show");
+                // Notify every other engine that a reuse-enabled window became
+                // visible so their WindowRegistry notifiers refresh immediately.
+                if (window_manager->is_reuse_enabled_) {
+                    _EmitGlobalEvent("reuse-show");
+                }
             } else {
                 _EmitEvent("hide");
             }
@@ -441,17 +446,17 @@ namespace window_manager_plus {
     }
 
     static void CleanupPendingWindows() {
-        for (auto pendId : WindowManagerPlus::pendingWindowCleanup_) {
-            auto it = WindowManagerPlus::windows_.find(pendId);
-            if (it != WindowManagerPlus::windows_.end()) {
-                WindowManagerPlus::windows_.erase(it);
+        for (auto pendId : MultiWindowManager::pendingWindowCleanup_) {
+            auto it = MultiWindowManager::windows_.find(pendId);
+            if (it != MultiWindowManager::windows_.end()) {
+                MultiWindowManager::windows_.erase(it);
             }
         }
-        WindowManagerPlus::pendingWindowCleanup_.clear();
+        MultiWindowManager::pendingWindowCleanup_.clear();
     }
 
 
-    void WindowManagerPlusPlugin::HandleStaticMethodCall(
+    void MultiWindowManagerPlugin::HandleStaticMethodCall(
             const flutter::MethodCall<flutter::EncodableValue>& method_call,
             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
 
@@ -482,21 +487,80 @@ namespace window_manager_plus {
                     windowArgs.push_back(std::get<std::string>(arg));
                 }
             }
-            auto newWindowId = WindowManagerPlus::createWindow(windowArgs);
+            auto newWindowId = MultiWindowManager::createWindow(windowArgs);
             result->Success(newWindowId >= 0 ? flutter ::EncodableValue(newWindowId)
                                              : flutter ::EncodableValue());
         } else if (method_name.compare("getAllWindowManagerIds") == 0) {
-            std::vector<int64_t> windowIds;
-            for (auto& window : WindowManagerPlus::windowManagers_) {
-                windowIds.push_back(window.first);
+            // NOTE: use EncodableList (untyped), NOT std::vector<int64_t>.
+            // std::vector<int64_t> is encoded as a typed kInt64List which requires
+            // 8-byte buffer alignment. The ByteData backing a method-channel reply
+            // is not guaranteed to start on an 8-byte boundary, so Dart throws
+            // RangeError when it calls buffer.asInt64List(). EncodableList stores
+            // each element as a boxed EncodableValue and is read without alignment.
+            flutter::EncodableList windowIds;
+            for (auto& window : MultiWindowManager::windowManagers_) {
+                windowIds.push_back(flutter::EncodableValue(window.first));
             }
             result->Success(flutter::EncodableValue(windowIds));
+        } else if (method_name.compare("getActiveWindowIds") == 0) {
+            // Returns IDs of all registered windows that are NOT currently hidden
+            // for reuse. A window is active when at least one of these is true:
+            //   - it has is_reuse_enabled_ == false (never hidden for reuse)
+            //   - it is currently visible (IsVisible() == true)
+            //   - it has been claimed and will appear momentarily (is_being_reused_)
+            // Safe to call from any Flutter engine: windowManagers_ is process-wide.
+            // Uses EncodableList - see getAllWindowManagerIds comment above.
+            flutter::EncodableList activeIds;
+            for (auto& pair : MultiWindowManager::windowManagers_) {
+                auto& wm = pair.second;
+                bool is_hidden = wm->is_reuse_enabled_ && !wm->IsVisible() &&
+                                 !wm->is_being_reused_;
+                if (!is_hidden) {
+                    activeIds.push_back(flutter::EncodableValue(pair.first));
+                }
+            }
+            result->Success(flutter::EncodableValue(activeIds));
+        } else if (method_name.compare("getHiddenWindowIds") == 0) {
+            // Returns IDs of reuse-enabled windows that are currently invisible
+            // and not yet claimed by a concurrent createWindowOrReuse() call.
+            // Safe to call from any Flutter engine: windowManagers_ is process-wide.
+            // Uses EncodableList - see getAllWindowManagerIds comment above.
+            flutter::EncodableList hiddenIds;
+            for (auto& pair : MultiWindowManager::windowManagers_) {
+                auto& wm = pair.second;
+                if (wm->is_reuse_enabled_ && !wm->IsVisible() &&
+                    !wm->is_being_reused_) {
+                    hiddenIds.push_back(flutter::EncodableValue(pair.first));
+                }
+            }
+            result->Success(flutter::EncodableValue(hiddenIds));
+        } else if (method_name.compare("claimWindow") == 0) {
+            // Atomically marks a hidden reuse-enabled window as "being reused" to
+            // prevent concurrent callers from other Flutter engines from claiming
+            // the same window. Returns true on success, false if the window is not
+            // found, not hidden, or already claimed.
+            // The claim is automatically released in MultiWindowManager::Show()
+            // (is_being_reused_ is reset there), which also causes getActiveWindowIds
+            // to include the window again before IsVisible() returns true.
+            int64_t targetId =
+                    std::get<int>(args.at(flutter::EncodableValue("windowId")));
+            auto it = MultiWindowManager::windowManagers_.find(targetId);
+            bool claimed = false;
+            if (it != MultiWindowManager::windowManagers_.end()) {
+                auto& wm = it->second;
+                if (wm->is_reuse_enabled_ && !wm->IsVisible() &&
+                    !wm->is_being_reused_) {
+                    wm->is_being_reused_ = true;
+                    claimed = true;
+                }
+            }
+            result->Success(flutter::EncodableValue(claimed));
         } else {
             result->NotImplemented();
         }
     }
 
-    void WindowManagerPlusPlugin::HandleMethodCall(
+    void MultiWindowManagerPlugin::HandleMethodCall(
             const flutter::MethodCall<flutter::EncodableValue>& method_call,
             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
         std::string method_name = method_call.method_name();
@@ -510,9 +574,9 @@ namespace window_manager_plus {
                 ? std::get<int>(args.at(flutter::EncodableValue("windowId")))
                 : -1;
         auto wManager = window_manager;
-        if (windowId >= 0 && WindowManagerPlus::windowManagers_.find(windowId) !=
-                             WindowManagerPlus::windowManagers_.end()) {
-            wManager = WindowManagerPlus::windowManagers_[windowId];
+        if (windowId >= 0 && MultiWindowManager::windowManagers_.find(windowId) !=
+                             MultiWindowManager::windowManagers_.end()) {
+            wManager = MultiWindowManager::windowManagers_[windowId];
         }
 
         if (method_name.compare("ensureInitialized") == 0) {
@@ -539,13 +603,13 @@ namespace window_manager_plus {
                     window_manager->channel =
                             std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
                                     registrar->messenger(),
-                                            "window_manager_plus_" + std::to_string(windowId),
+                                            "multi_window_manager_" + std::to_string(windowId),
                                             &flutter::StandardMethodCodec::GetInstance());
                     window_manager->channel->SetMethodCallHandler(
                             [this](const auto& call, auto result) {
                                 HandleMethodCall(call, std::move(result));
                             });
-                    WindowManagerPlus::windowManagers_[windowId] = window_manager;
+                    MultiWindowManager::windowManagers_[windowId] = window_manager;
                 }
 
                 result->Success(flutter::EncodableValue(true));
@@ -556,12 +620,12 @@ namespace window_manager_plus {
         } else if (method_name.compare("invokeMethodToWindow") == 0) {
             auto targetWindowId =
                     std::get<int>(args.at(flutter::EncodableValue("targetWindowId")));
-            if (WindowManagerPlus::windowManagers_.find(targetWindowId) !=
-                WindowManagerPlus::windowManagers_.end()) {
+            if (MultiWindowManager::windowManagers_.find(targetWindowId) !=
+                MultiWindowManager::windowManagers_.end()) {
                 auto result_ =
                         std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
                                 std::move(result));
-                WindowManagerPlus::windowManagers_[targetWindowId]->channel->InvokeMethod(
+                MultiWindowManager::windowManagers_[targetWindowId]->channel->InvokeMethod(
                         "onEvent",
                         std::make_unique<flutter::EncodableValue>(
                                 args.at(flutter::EncodableValue("args"))),
@@ -767,11 +831,11 @@ namespace window_manager_plus {
         }
     }
 
-}  // namespace window_manager_plus
+}  // namespace multi_window_manager
 
-void WindowManagerPlusPluginRegisterWithRegistrar(
+void MultiWindowManagerPluginRegisterWithRegistrar(
         FlutterDesktopPluginRegistrarRef registrar) {
-    window_manager_plus::WindowManagerPlusPlugin::RegisterWithRegistrar(
+    multi_window_manager::MultiWindowManagerPlugin::RegisterWithRegistrar(
             flutter::PluginRegistrarManager::GetInstance()
                     ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
 }

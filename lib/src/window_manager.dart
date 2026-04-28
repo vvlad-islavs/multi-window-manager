@@ -7,12 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
-import 'package:window_manager_plus/src/resize_edge.dart';
-import 'package:window_manager_plus/src/title_bar_style.dart';
-import 'package:window_manager_plus/src/utils/calc_window_position.dart';
-import 'package:window_manager_plus/src/window_listener.dart';
-import 'package:window_manager_plus/src/window_options.dart';
-import 'package:window_manager_plus/src/window_registry.dart';
+import 'package:multi_window_manager/src/resize_edge.dart';
+import 'package:multi_window_manager/src/title_bar_style.dart';
+import 'package:multi_window_manager/src/utils/calc_window_position.dart';
+import 'package:multi_window_manager/src/window_listener.dart';
+import 'package:multi_window_manager/src/window_options.dart';
+import 'package:multi_window_manager/src/window_registry.dart';
 
 const kWindowEventInitialized = 'initialized';
 const kWindowEventClose = 'close';
@@ -41,47 +41,52 @@ const kWindowEventUndocked = 'undocked';
 /// - In the **hiding window** (windowId == null): handled by
 ///   [SecondaryWindowHostState] to mark itself as uninitialized.
 /// - In **other windows** (windowId != null): handled by
-///   [WindowManagerPlus._methodCallHandler] to call
-///   [WindowRegistry.markHidden] automatically.
+///   [MultiWindowManager._methodCallHandler] via [WindowRegistry.refresh].
 const kWindowEventReuseClose = 'reuse-close';
 
-/// Event sent from the main window to a hidden secondary window to reuse it.
-/// The secondary window should reinitialize itself with the provided args.
-/// Used by [WindowManagerPlus.createWindowOrReuse] and handled by [SecondaryWindowHost].
+/// Event emitted globally by the native layer (WM_SHOWWINDOW with wParam=TRUE)
+/// when a reuse-enabled hidden window becomes visible again.
+/// Every engine's [MultiWindowManager._methodCallHandler] calls
+/// [WindowRegistry.refresh] so all isolate-level caches converge to the
+/// current native state within one event-loop tick.
+const kWindowEventReuseShow = 'reuse-show';
+
+/// Event sent from any window to a hidden secondary window to reuse it.
+/// The secondary window reinitializes itself with the provided args.
+/// Used by [MultiWindowManager.createWindowOrReuse] and handled by [SecondaryWindowHost].
 const kWindowEventShowWindow = 'show-window';
 
-/// Event sent from a secondary window to the main window (id = 0) when the
-/// secondary window hides itself instead of truly closing.
-/// Received by the main window's [WindowManagerPlus._methodCallHandler] which
-/// automatically calls [WindowRegistry.markHidden].
+/// Legacy event sent from a secondary window when it hides itself.
+/// Kept for backward compatibility; registry sync is now handled automatically
+/// by global [kWindowEventReuseClose] via [WindowRegistry.refresh].
 const kWindowEventHideWindow = 'hide-window';
 
 enum DockSide { left, right }
 
-/// WindowManagerPlus
-class WindowManagerPlus {
-  WindowManagerPlus._(int id)
+/// MultiWindowManager
+class MultiWindowManager {
+  MultiWindowManager._(int id)
       : _id = id,
-        _channel = MethodChannel('window_manager_plus_$id') {
+        _channel = MethodChannel('multi_window_manager_$id') {
     _channel.setMethodCallHandler(_methodCallHandler);
   }
 
-  WindowManagerPlus._fromWindowId(int id)
+  MultiWindowManager._fromWindowId(int id)
       : _id = id,
         _channel = _current!._channel {}
 
   final MethodChannel _channel;
-  static const MethodChannel _staticChannel = MethodChannel('window_manager_plus_static');
+  static const MethodChannel _staticChannel = MethodChannel('multi_window_manager_static');
 
   int _id;
 
   int get id => _id;
 
-  static WindowManagerPlus? _current;
+  static MultiWindowManager? _current;
 
-  /// The current instance of [WindowManagerPlus].
+  /// The current instance of [MultiWindowManager].
   /// [ensureInitialized] must be called before accessing this.
-  static WindowManagerPlus get current => _current!;
+  static MultiWindowManager get current => _current!;
 
   final ObserverList<WindowListener> _listeners = ObserverList<WindowListener>();
 
@@ -89,14 +94,19 @@ class WindowManagerPlus {
 
   static final Map<int, Completer> _completers = {};
 
-  /// Dart-level registry that tracks secondary window ids and their hidden/active state.
+  /// Per-isolate reactive view of the process-wide window registry.
   ///
-  /// Maintained automatically by [_methodCallHandler] in the **main window** process:
-  /// - [kWindowEventInitialized] → [WindowRegistry.register]
-  /// - [kWindowEventClose]       → [WindowRegistry.unregister]
-  /// - incoming [kWindowEventHideWindow] from a child → [WindowRegistry.markHidden]
+  /// The authoritative state lives in the native C++ layer (shared static maps).
+  /// [_methodCallHandler] calls [WindowRegistry.refresh] on every lifecycle
+  /// event so the local [ValueNotifier]s stay in sync:
+  /// - [kWindowEventInitialized] - new window registered
+  /// - [kWindowEventClose]       - window destroyed
+  /// - [kWindowEventReuseClose]  - reuse-enabled window hid itself
+  /// - [kWindowEventReuseShow]   - hidden window became active
   ///
-  /// Use [createWindowOrReuse] to benefit from the registry.
+  /// Use [WindowRegistry.activeWindows] / [WindowRegistry.hiddenWindows]
+  /// to drive reactive UI. For a guaranteed-fresh read, use
+  /// [WindowRegistry.getActiveWindowIds] / [WindowRegistry.getHiddenWindowIds].
   static final WindowRegistry registry = WindowRegistry();
 
   Future<dynamic> _methodCallHandler(MethodCall call) async {
@@ -111,18 +121,17 @@ class WindowManagerPlus {
           _completers[windowId]?.complete();
         }
         _completers.remove(windowId);
-        registry.register(windowId);
+        await registry.refresh();
       } else if (eventName == kWindowEventClose) {
         if (_completers[windowId] != null && !_completers[windowId]!.isCompleted) {
           _completers[windowId]?.complete();
         }
         _completers.remove(windowId);
-        registry.unregister(windowId);
+        await registry.refresh();
       } else if (eventName == kWindowEventReuseClose) {
-        // Emitted globally by the native layer when a reuse-enabled window
-        // receives WM_CLOSE.  Automatically keeps the registry in sync so
-        // createWindowOrReuse can find the hidden window for the next reuse.
-        registry.markHidden(windowId);
+        await registry.refresh();
+      } else if (eventName == kWindowEventReuseShow) {
+        await registry.refresh();
       }
 
       for (final WindowListener listener in globalListeners) {
@@ -189,15 +198,6 @@ class WindowManagerPlus {
         }
       }
     } else if (_current != null && _id == _current!.id) {
-      // Auto-update registry when a child window reports hiding itself.
-      // This runs before listeners so the registry is up-to-date when they handle the event.
-      if (eventName == kEventFromWindow) {
-        final String method = call.arguments['method'];
-        final int fromWindowId = call.arguments['fromWindowId'];
-        if (method == kWindowEventHideWindow) {
-          registry.markHidden(fromWindowId);
-        }
-      }
 
       for (final WindowListener listener in listeners) {
         if (!_listeners.contains(listener)) {
@@ -287,7 +287,7 @@ class WindowManagerPlus {
   }
 
   /// Create a new window.
-  static Future<WindowManagerPlus?> createWindow([List<String>? args]) async {
+  static Future<MultiWindowManager?> createWindow([List<String>? args]) async {
     final Map<String, dynamic> arguments = {
       'args': args,
     };
@@ -297,57 +297,80 @@ class WindowManagerPlus {
     }
     _completers[windowId] = Completer();
     await _completers[windowId]?.future;
-    return WindowManagerPlus._fromWindowId(windowId);
+    return MultiWindowManager._fromWindowId(windowId);
   }
 
   /// Creates a new secondary window **or reuses** an existing hidden one.
   ///
-  /// Uses the plugin-level [registry] to decide:
-  /// - **No hidden windows** → calls [createWindow] with [args]; the new id is
-  ///   registered automatically when [kWindowEventInitialized] arrives.
-  /// - **Has hidden windows** → sends [kWindowEventShowWindow] to the first hidden
-  ///   window with [args], marks it active in [registry], and returns its manager
-  ///   without spawning a new Flutter Engine process.
+  /// Queries the **native layer** for currently hidden reuse-enabled windows -
+  /// windows started with [ensureInitializedSecondary] `isEnabledReuse: true`
+  /// that are currently invisible and not already claimed by a concurrent call.
+  /// The native map (`windowManagers_`) is process-wide, so the list is always
+  /// accurate regardless of which Flutter engine makes the call.
   ///
-  /// The secondary window must use [SecondaryWindowHost] (or equivalent logic) to
+  /// Decision logic:
+  /// - **No claimable hidden windows** -> calls [createWindow] with [args].
+  /// - **Has claimable windows** -> atomically claims the first one (preventing
+  ///   concurrent reuse of the same window), sends [kWindowEventShowWindow] with
+  ///   [args], and returns its manager without spawning a new Flutter Engine.
+  ///
+  /// **Can be called from any window** - main (id = 0) or any secondary window -
+  /// because the underlying visibility state lives in the shared native layer.
+  ///
+  /// The target window must use [SecondaryWindowHost] (or equivalent logic) to
   /// handle [kWindowEventShowWindow] and reinitialize its content.
   ///
-  /// **Must be called from the main window (id = 0).**
-  ///
-  /// Each window runs in its own Flutter Engine with its own memory space.
-  /// [registry] is only meaningful in the main window's process because:
-  /// - [kWindowEventInitialized] and [kWindowEventClose] (which populate [registry])
-  ///   are delivered only to the window that called [createWindow] — the main window.
-  /// - [kWindowEventHideWindow] is sent by children to id = 0, so only the main
-  ///   window's [_methodCallHandler] calls [WindowRegistry.markHidden].
-  /// In a child process, [registry] is always empty and [createWindowOrReuse] would
-  /// always create a new window instead of reusing.
-  static Future<WindowManagerPlus?> createWindowOrReuse({
+  /// The Dart-level [registry] is updated locally in the calling window's
+  /// isolate for use by [WindowRegistry.activeWindows] /
+  /// [WindowRegistry.hiddenWindows] notifiers; other windows update their
+  /// registries via the global [kWindowEventReuseClose] / [kWindowEventInitialized]
+  /// events as before.
+  static Future<MultiWindowManager?> createWindowOrReuse({
     List<String>? args,
   }) async {
-    final hidden = registry.getHiddenWindowIds();
+    final hiddenIds = await _getNativeHiddenWindowIds();
 
-    if (hidden.isEmpty) {
-      final manager = await createWindow(args);
-      // Registry is updated automatically via kWindowEventInitialized in _methodCallHandler.
-      return manager;
+    for (final id in hiddenIds) {
+      // Atomically claim the window so that concurrent callers from other
+      // Flutter engines cannot pick the same window.
+      final claimed = await _claimNativeWindow(id);
+      if (!claimed) continue;
+
+      try {
+        await current.invokeMethodToWindow(id, kWindowEventShowWindow, args);
+        return fromWindowId(id);
+      } catch (e) {
+        log('createWindowOrReuse: reuse of window $id failed ($e), trying next',
+            name: 'MultiWindowManager');
+        await registry.refresh();
+      }
     }
 
-    // Try to reuse the first available hidden window.
-    // If invokeMethodToWindow fails (stale entry — window was truly destroyed despite
-    // being marked hidden), clean up and fall back to creating a new window.
-    final id = hidden.first;
-    try {
-      registry.markActive(id);
-      await current.invokeMethodToWindow(id, kWindowEventShowWindow, args);
-      return fromWindowId(id);
-    } catch (e) {
-      log('createWindowOrReuse: reuse of window $id failed ($e), falling back to createWindow',
-          name: 'WindowManagerPlus');
-      registry.unregister(id);
-      final manager = await createWindow(args);
-      return manager;
-    }
+    // No claimable hidden window found - spawn a fresh one.
+    // Registry is updated automatically when kWindowEventInitialized arrives.
+    return createWindow(args);
+  }
+
+  /// Queries the native layer for IDs of reuse-enabled windows that are
+  /// currently hidden and not yet claimed by another [createWindowOrReuse] call.
+  ///
+  /// Safe to call from any Flutter engine in the process.
+  static Future<List<int>> _getNativeHiddenWindowIds() async {
+    return (await _staticChannel.invokeMethod<List<dynamic>>('getHiddenWindowIds'))
+            ?.cast<int>() ??
+        [];
+  }
+
+  /// Atomically claims a hidden window for reuse at the native layer.
+  ///
+  /// Returns `true` if the window was successfully claimed (it was hidden,
+  /// reuse-enabled, and not already taken by another caller). Returns `false`
+  /// if the window is no longer available. The claim is automatically released
+  /// when the window's native `Show()` is invoked.
+  static Future<bool> _claimNativeWindow(int windowId) async {
+    return await _staticChannel.invokeMethod<bool>(
+            'claimWindow', {'windowId': windowId}) ??
+        false;
   }
 
   /// Get all window manager ids.
@@ -356,38 +379,38 @@ class WindowManagerPlus {
   }
 
   /// Get the window manager from the window id.
-  static WindowManagerPlus fromWindowId(int windowId) {
-    return WindowManagerPlus._fromWindowId(windowId);
+  static MultiWindowManager fromWindowId(int windowId) {
+    return MultiWindowManager._fromWindowId(windowId);
   }
 
-  /// Initialises the window manager for the **main** window.
+  /// Initialises the window manager for the **main** window (id = 0).
   ///
-  /// Must be called once before accessing [WindowManagerPlus.current].
-  /// The main window never participates in the reuse-cache mechanism, so no
-  /// [isEnabledReuse] parameter is available here — use
-  /// [ensureInitializedSecondary] for child windows instead.
+  /// Must be called once before accessing [MultiWindowManager.current].
+  /// The main window never participates in the reuse-cache mechanism (it is
+  /// never hidden or reclaimed), so no [isEnabledReuse] parameter is available
+  /// here - use [ensureInitializedSecondary] for all child windows instead.
   static Future<void> ensureInitialized(int windowId) async {
     if (_current != null) return;
     final Map<String, dynamic> arguments = {'windowId': windowId};
     // ignore: unused_local_variable
-    MethodChannel channel = const MethodChannel('window_manager_plus');
-    log('Инициализирован форк WindowManagerPlus (main)', name: 'WindowManagerPlus');
+    MethodChannel channel = const MethodChannel('multi_window_manager');
+    log('MultiWindowManager initialized (main)', name: 'MultiWindowManager');
     await channel.invokeMethod('ensureInitialized', arguments);
-    _current = WindowManagerPlus._(windowId);
+    _current = MultiWindowManager._(windowId);
   }
 
   /// Initialises the window manager for a **secondary** (child) window.
   ///
-  /// Must be called once before accessing [WindowManagerPlus.current].
+  /// Must be called once before accessing [MultiWindowManager.current].
   ///
   /// [isEnabledReuse] - when `true` the native layer intercepts **any**
   /// WM_CLOSE (X button, Alt+F4, graceful task-manager close, etc.) and hides
   /// the window instead of destroying it.  The native side emits
   /// [kWindowEventReuseClose] locally (so [WindowListener.onWindowClose] still
-  /// fires for cleanup) and globally (so the main window registry automatically
-  /// calls [WindowRegistry.markHidden]).  [setPreventClose] remains fully
+  /// fires for cleanup) and globally (so every engine calls
+  /// [WindowRegistry.refresh] automatically).  [setPreventClose] remains fully
   /// available for inner widgets because this mechanism is independent of
-  /// [is_prevent_close_] — if [setPreventClose(true)] is set,
+  /// [is_prevent_close_] - if [setPreventClose(true)] is set,
   /// [kWindowEventReuseClose] is suppressed until the user dismisses the dialog.
   static Future<void> ensureInitializedSecondary(int windowId, {bool isEnabledReuse = false}) async {
     if (_current != null) return;
@@ -396,11 +419,11 @@ class WindowManagerPlus {
       'isEnabledReuse': isEnabledReuse,
     };
     // ignore: unused_local_variable
-    MethodChannel _channel = const MethodChannel('window_manager_plus');
-    log('Инициализирован форк WindowManagerPlus (secondary, reuse=$isEnabledReuse)',
-        name: 'WindowManagerPlus');
+    MethodChannel _channel = const MethodChannel('multi_window_manager');
+    log('MultiWindowManager initialized (secondary, reuse=$isEnabledReuse)',
+        name: 'MultiWindowManager');
     await _channel.invokeMethod('ensureInitialized', arguments);
-    _current = WindowManagerPlus._(windowId);
+    _current = MultiWindowManager._(windowId);
   }
 
   Future<T?> _invokeMethod<T>(String method, [Map<String, dynamic>? arguments]) {
@@ -1105,6 +1128,6 @@ class WindowManagerPlus {
 
   @override
   String toString() {
-    return 'WindowManagerPlus{id: $_id}';
+    return 'MultiWindowManager{id: $_id}';
   }
 }

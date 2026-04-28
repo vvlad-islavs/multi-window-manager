@@ -5,12 +5,12 @@
 import FlutterMacOS
 import Foundation
 
+import multi_window_manager
 import screen_retriever_macos
 import tray_manager
-import window_manager_plus
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  MultiWindowManagerPlugin.register(with: registry.registrar(forPlugin: "MultiWindowManagerPlugin"))
   ScreenRetrieverMacosPlugin.register(with: registry.registrar(forPlugin: "ScreenRetrieverMacosPlugin"))
   TrayManagerPlugin.register(with: registry.registrar(forPlugin: "TrayManagerPlugin"))
-  WindowManagerPlusPlugin.register(with: registry.registrar(forPlugin: "WindowManagerPlusPlugin"))
 }

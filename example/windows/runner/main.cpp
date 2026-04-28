@@ -7,7 +7,7 @@
 #include "flutter_window.h"
 #include "utils.h"
 
-#include "window_manager_plus/window_manager_plus_plugin.h"
+#include "multi_window_manager/multi_window_manager_plugin.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance,
                       _In_opt_ HINSTANCE prev,
@@ -37,7 +37,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance,
   }
   window.SetQuitOnClose(false);
 
-  WindowManagerPlusPluginSetWindowCreatedCallback(
+  MultiWindowManagerPluginSetWindowCreatedCallback(
       [](std::vector<std::string> command_line_arguments) {
         flutter::DartProject project(L"data");
 

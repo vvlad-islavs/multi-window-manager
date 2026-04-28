@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'package:window_manager_plus/src/widgets/drag_to_move_area.dart';
-import 'package:window_manager_plus/src/widgets/window_caption_button.dart';
-import 'package:window_manager_plus/src/window_listener.dart';
-import 'package:window_manager_plus/src/window_manager.dart';
+import 'package:multi_window_manager/src/widgets/drag_to_move_area.dart';
+import 'package:multi_window_manager/src/widgets/window_caption_button.dart';
+import 'package:multi_window_manager/src/window_listener.dart';
+import 'package:multi_window_manager/src/window_manager.dart';
 
 const double kWindowCaptionHeight = 32;
 
@@ -42,13 +42,13 @@ class WindowCaption extends StatefulWidget {
 class _WindowCaptionState extends State<WindowCaption> with WindowListener {
   @override
   void initState() {
-    WindowManagerPlus.current.addListener(this);
+    MultiWindowManager.current.addListener(this);
     super.initState();
   }
 
   @override
   void dispose() {
-    WindowManagerPlus.current.removeListener(this);
+    MultiWindowManager.current.removeListener(this);
     super.dispose();
   }
 
@@ -89,29 +89,29 @@ class _WindowCaptionState extends State<WindowCaption> with WindowListener {
           WindowCaptionButton.minimize(
             brightness: widget.brightness,
             onPressed: () async {
-              bool isMinimized = await WindowManagerPlus.current.isMinimized();
+              bool isMinimized = await MultiWindowManager.current.isMinimized();
               if (isMinimized) {
-                WindowManagerPlus.current.restore();
+                MultiWindowManager.current.restore();
               } else {
-                WindowManagerPlus.current.minimize();
+                MultiWindowManager.current.minimize();
               }
             },
           ),
           FutureBuilder<bool>(
-            future: WindowManagerPlus.current.isMaximized(),
+            future: MultiWindowManager.current.isMaximized(),
             builder: (BuildContext context, AsyncSnapshot<bool> snapshot) {
               if (snapshot.data == true) {
                 return WindowCaptionButton.unmaximize(
                   brightness: widget.brightness,
                   onPressed: () {
-                    WindowManagerPlus.current.unmaximize();
+                    MultiWindowManager.current.unmaximize();
                   },
                 );
               }
               return WindowCaptionButton.maximize(
                 brightness: widget.brightness,
                 onPressed: () {
-                  WindowManagerPlus.current.maximize();
+                  MultiWindowManager.current.maximize();
                 },
               );
             },
@@ -119,7 +119,7 @@ class _WindowCaptionState extends State<WindowCaption> with WindowListener {
           WindowCaptionButton.close(
             brightness: widget.brightness,
             onPressed: () {
-              WindowManagerPlus.current.close();
+              MultiWindowManager.current.close();
             },
           ),
         ],
