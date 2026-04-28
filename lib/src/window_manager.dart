@@ -39,7 +39,7 @@ const kWindowEventUndocked = 'undocked';
 /// graceful close, etc.).
 ///
 /// - In the **hiding window** (windowId == null): handled by
-///   [SecondaryWindowHostState] to mark itself as uninitialized.
+///   [ReuseWindowState] to mark itself as uninitialized.
 /// - In **other windows** (windowId != null): handled by
 ///   [MultiWindowManager._methodCallHandler] via [WindowRegistry.refresh].
 const kWindowEventReuseClose = 'reuse-close';
@@ -53,7 +53,7 @@ const kWindowEventReuseShow = 'reuse-show';
 
 /// Event sent from any window to a hidden secondary window to reuse it.
 /// The secondary window reinitializes itself with the provided args.
-/// Used by [MultiWindowManager.createWindowOrReuse] and handled by [SecondaryWindowHost].
+/// Used by [MultiWindowManager.createWindowOrReuse] and handled by [ReuseWindow].
 const kWindowEventShowWindow = 'show-window';
 
 /// Legacy event sent from a secondary window when it hides itself.
@@ -317,7 +317,7 @@ class MultiWindowManager {
   /// **Can be called from any window** - main (id = 0) or any secondary window -
   /// because the underlying visibility state lives in the shared native layer.
   ///
-  /// The target window must use [SecondaryWindowHost] (or equivalent logic) to
+  /// The target window must use [ReuseWindow] (or equivalent logic) to
   /// handle [kWindowEventShowWindow] and reinitialize its content.
   ///
   /// The Dart-level [registry] is updated locally in the calling window's

@@ -89,7 +89,7 @@ class _MyAppState extends State<MyApp> {
       },
       navigatorObservers: [BotToastNavigatorObserver()],
       home: widget.isSecondary
-          ? SecondaryWindowHost(
+          ? ReusableWindow(
               initialArgs: widget.args,
               windowOptions: WindowOptions(
                 size: const Size(800, 600),
