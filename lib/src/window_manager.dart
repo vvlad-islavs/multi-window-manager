@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 import 'package:multi_window_manager/src/resize_edge.dart';
 import 'package:multi_window_manager/src/title_bar_style.dart';
 import 'package:multi_window_manager/src/utils/calc_window_position.dart';
+import 'package:multi_window_manager/src/reuse_window_listener.dart';
 import 'package:multi_window_manager/src/window_listener.dart';
 import 'package:multi_window_manager/src/window_options.dart';
 import 'package:multi_window_manager/src/window_registry.dart';
@@ -92,6 +93,11 @@ class MultiWindowManager {
 
   static final ObserverList<WindowListener> _globalListeners = ObserverList<WindowListener>();
 
+  /// Internal listeners for reuse-lifecycle events only.
+  /// Registered by [ReuseWindowState] via [addReuseListener].
+  final ObserverList<ReusableWindowListener> _reuseListeners =
+      ObserverList<ReusableWindowListener>();
+
   static final Map<int, Completer> _completers = {};
 
   /// Per-isolate reactive view of the process-wide window registry.
@@ -129,9 +135,13 @@ class MultiWindowManager {
         _completers.remove(windowId);
         await registry.refresh();
       } else if (eventName == kWindowEventReuseClose) {
+        // Internal reuse event - refresh registry but don't expose to public listeners.
         await registry.refresh();
+        return null;
       } else if (eventName == kWindowEventReuseShow) {
+        // Internal reuse event - refresh registry but don't expose to public listeners.
         await registry.refresh();
+        return null;
       }
 
       for (final WindowListener listener in globalListeners) {
@@ -198,6 +208,23 @@ class MultiWindowManager {
         }
       }
     } else if (_current != null && _id == _current!.id) {
+      if (eventName == kWindowEventReuseClose) {
+        for (final l in List<ReusableWindowListener>.from(_reuseListeners)) {
+          l.onReuseClose();
+        }
+      }
+
+      // Show-window inter-window request: route to internal listeners only.
+      if (eventName == kEventFromWindow) {
+        final String method = call.arguments['method'];
+        if (method == kWindowEventShowWindow) {
+          final dynamic args = call.arguments['arguments'];
+          for (final l in List<ReusableWindowListener>.from(_reuseListeners)) {
+            await l.onShowWindow(args);
+          }
+          return null;
+        }
+      }
 
       for (final WindowListener listener in listeners) {
         if (!_listeners.contains(listener)) {
@@ -216,6 +243,8 @@ class MultiWindowManager {
         listener.onWindowEvent(eventName);
         Map<String, Function> funcMap = {
           kWindowEventClose: listener.onWindowClose,
+          // kWindowEventReuseClose maps to onWindowClose so that listeners
+          // react to a reuse-hide the same way as to a real close.
           kWindowEventReuseClose: listener.onWindowClose,
           kWindowEventFocus: listener.onWindowFocus,
           kWindowEventBlur: listener.onWindowBlur,
@@ -256,6 +285,20 @@ class MultiWindowManager {
   /// Remove a listener from the window.
   void removeListener(WindowListener listener) {
     _listeners.remove(listener);
+  }
+
+  /// Register an internal reuse-lifecycle listener for this window.
+  ///
+  /// Used exclusively by [ReuseWindowState]. Routes [kWindowEventReuseClose]
+  /// and [kWindowEventShowWindow] to [ReusableWindowListener] without exposing
+  /// them to public [WindowListener] subscribers.
+  void addReuseListener(ReusableWindowListener listener) {
+    _reuseListeners.add(listener);
+  }
+
+  /// Unregister an internal reuse-lifecycle listener.
+  void removeReuseListener(ReusableWindowListener listener) {
+    _reuseListeners.remove(listener);
   }
 
   /// Get the global window listeners.

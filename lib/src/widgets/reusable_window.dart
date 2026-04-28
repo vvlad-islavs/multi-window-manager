@@ -2,8 +2,8 @@ import 'dart:developer';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:multi_window_manager/src/reuse_window_listener.dart';
 import 'package:multi_window_manager/src/title_bar_style.dart';
-import 'package:multi_window_manager/src/window_listener.dart';
 import 'package:multi_window_manager/src/window_manager.dart';
 import 'package:multi_window_manager/src/window_options.dart';
 
@@ -28,7 +28,7 @@ import 'package:multi_window_manager/src/window_options.dart';
 /// await MultiWindowManager.ensureInitializedSecondary(windowId, isEnabledReuse: true);
 ///
 /// runApp(MaterialApp(
-///   home: ReuseWindow(
+///   home: ReusableWindow(
 ///     initialArgs: args,
 ///     builder: (context, args) => MyPage(args: args),
 ///   ),
@@ -74,25 +74,24 @@ class ReusableWindow extends StatefulWidget {
   State<ReusableWindow> createState() => ReusableWindowState();
 }
 
-class ReusableWindowState extends State<ReusableWindow> {
+class ReusableWindowState extends State<ReusableWindow>
+    implements ReusableWindowListener {
   dynamic _currentArgs;
+  final GlobalKey _windowSecondaryKey = GlobalKey();
   bool _isInitialized = false;
-
-  // Dedicated private listener so this widget does NOT implement
-  // WindowListener itself. Inner listeners added via
-  // MultiWindowManager.current.addListener() are unaffected.
-  late final _ReuseWindowListener _listener;
 
   @override
   void initState() {
     super.initState();
-    _listener = _ReuseWindowListener(
-      onReuseClose: _onReuseClose,
-      onShowWindow: _onShowWindow,
-    );
-    MultiWindowManager.current.addListener(_listener);
+    MultiWindowManager.current.addReuseListener(this);
     _currentArgs = widget.initialArgs;
     _showWindow();
+  }
+
+  @override
+  void dispose() {
+    MultiWindowManager.current.removeReuseListener(this);
+    super.dispose();
   }
 
   /// Positions and shows the window, then marks [_isInitialized] = true.
@@ -102,6 +101,13 @@ class ReusableWindowState extends State<ReusableWindow> {
 
     await MultiWindowManager.current.waitUntilReadyToShow(widget.windowOptions,
         () async {
+      Navigator.of(
+        _windowSecondaryKey.currentContext ?? context,
+        rootNavigator: true,
+      ).popUntil((route) => route.isFirst);
+      // Some time to close all dialogs
+      await Future.delayed(const Duration(milliseconds: 150));
+
       await MultiWindowManager.current.show();
       await MultiWindowManager.current.focus();
     });
@@ -115,8 +121,8 @@ class ReusableWindowState extends State<ReusableWindow> {
       _forceWindowsRepaint();
     }
 
-    log('ReuseWindow ${MultiWindowManager.current.id} shown',
-        name: 'ReuseWindow');
+    log('ReusableWindow ${MultiWindowManager.current.id} shown',
+        name: 'ReusableWindow');
   }
 
   /// Schedules a 1-pixel resize round-trip on Windows to force the Flutter
@@ -131,26 +137,26 @@ class ReusableWindowState extends State<ReusableWindow> {
     });
   }
 
-  void _onReuseClose() {
+  // ReusableWindowListener
+
+  @override
+  Future<void> onReuseClose() async {
     if (mounted) setState(() => _isInitialized = false);
-    log('ReuseWindow ${MultiWindowManager.current.id} hidden for reuse',
-        name: 'ReuseWindow');
+    log('ReusableWindow ${MultiWindowManager.current.id} hidden for reuse',
+        name: 'ReusableWindow');
   }
 
-  Future<void> _onShowWindow(dynamic args) async {
+  @override
+  Future<void> onShowWindow(dynamic args) async {
     _currentArgs = args;
     await _showWindow();
   }
 
   @override
-  void dispose() {
-    MultiWindowManager.current.removeListener(_listener);
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) => _isInitialized
-      ? widget.builder(context, _currentArgs)
+      ? KeyedSubtree(
+          key: _windowSecondaryKey,
+          child: widget.builder(context, _currentArgs))
       : widget.loadingBuilder?.call(context) ??
           const Center(
             child: SizedBox(
@@ -159,41 +165,4 @@ class ReusableWindowState extends State<ReusableWindow> {
               child: CircularProgressIndicator(),
             ),
           );
-}
-
-/// Internal [WindowListener] used exclusively by [ReusableWindowState].
-///
-/// Handles two events:
-/// - [kWindowEventReuseClose] - native WM_CLOSE intercepted; window is hidden.
-/// - [kWindowEventShowWindow] - a window is asking this one to reinitialize
-///   and show with new args.
-///
-/// Does not override [onWindowClose], so inner widgets using [setPreventClose]
-/// for confirmation dialogs are unaffected.
-class _ReuseWindowListener with WindowListener {
-  _ReuseWindowListener({
-    required this.onReuseClose,
-    required this.onShowWindow,
-  });
-
-  final void Function() onReuseClose;
-  final Future<void> Function(dynamic args) onShowWindow;
-
-  @override
-  void onWindowEvent(String eventName, [int? windowId]) {
-    // windowId == null means the event targets THIS window (_EmitEvent path).
-    if (windowId != null) return;
-    if (eventName == kWindowEventReuseClose) {
-      onReuseClose();
-    }
-  }
-
-  @override
-  Future<dynamic> onEventFromWindow(
-      String eventName, int fromWindowId, dynamic arguments) async {
-    if (eventName == kWindowEventShowWindow) {
-      await onShowWindow(arguments);
-    }
-    return null;
-  }
 }

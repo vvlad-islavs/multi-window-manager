@@ -1116,6 +1116,7 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
 
   @override
   void onWindowClose([int? windowId]) {
+    debugPrint('close, id: $windowId');
     if (windowId != null) {
       return;
     }
