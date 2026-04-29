@@ -6,14 +6,14 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path/path.dart' as path;
 import 'package:multi_window_manager/src/resize_edge.dart';
+import 'package:multi_window_manager/src/reuse_window_listener.dart';
 import 'package:multi_window_manager/src/title_bar_style.dart';
 import 'package:multi_window_manager/src/utils/calc_window_position.dart';
-import 'package:multi_window_manager/src/reuse_window_listener.dart';
 import 'package:multi_window_manager/src/window_listener.dart';
 import 'package:multi_window_manager/src/window_options.dart';
 import 'package:multi_window_manager/src/window_registry.dart';
+import 'package:path/path.dart' as path;
 
 const kWindowEventInitialized = 'initialized';
 const kWindowEventClose = 'close';
@@ -292,11 +292,13 @@ class MultiWindowManager {
   /// Used exclusively by [ReuseWindowState]. Routes [kWindowEventReuseClose]
   /// and [kWindowEventShowWindow] to [ReusableWindowListener] without exposing
   /// them to public [WindowListener] subscribers.
+  @internal
   void addReuseListener(ReusableWindowListener listener) {
     _reuseListeners.add(listener);
   }
 
   /// Unregister an internal reuse-lifecycle listener.
+  @internal
   void removeReuseListener(ReusableWindowListener listener) {
     _reuseListeners.remove(listener);
   }

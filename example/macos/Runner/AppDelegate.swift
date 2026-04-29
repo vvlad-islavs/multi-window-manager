@@ -1,6 +1,6 @@
 import Cocoa
 import FlutterMacOS
-import window_manager_plus
+import multi_window_manager
 
 
 @main

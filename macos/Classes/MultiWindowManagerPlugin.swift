@@ -1,333 +1,425 @@
 import Cocoa
 import FlutterMacOS
 
-public class WindowManagerPlusPlugin: NSObject, FlutterPlugin {
-    public static var RegisterGeneratedPlugins:((FlutterPluginRegistry) -> Void)?
-    
+public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
+    public static var RegisterGeneratedPlugins: ((FlutterPluginRegistry) -> Void)?
+
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let _ = WindowManagerPlusPlugin(registrar)
+        let _ = MultiWindowManagerPlugin(registrar)
     }
-    
-    private var registrar: FlutterPluginRegistrar!;
-    
+
+    private var registrar: FlutterPluginRegistrar!
+
     private var mainWindow: NSWindow {
-        get {
-            return (self.registrar.view?.window)!;
-        }
+        return (self.registrar.view?.window)!
     }
-    
+
     private var _inited: Bool = false
-    private var windowManager: WindowManagerPlus = WindowManagerPlus()
+    private var windowManager: MultiWindowManager = MultiWindowManager()
     // Kept alive so hot restart can call ensureInitialized on this channel again
     private var _bootstrapChannel: FlutterMethodChannel?
-    
+
     public init(_ registrar: FlutterPluginRegistrar) {
         super.init()
         self.registrar = registrar
-        
-        windowManager.staticChannel = FlutterMethodChannel(name: "window_manager_plus_static", binaryMessenger: registrar.messenger)
+
+        windowManager.staticChannel = FlutterMethodChannel(
+            name: "multi_window_manager_static",
+            binaryMessenger: registrar.messenger
+        )
         windowManager.staticChannel?.setMethodCallHandler(staticHandle)
-        
-        _bootstrapChannel = FlutterMethodChannel(name: "window_manager_plus", binaryMessenger: registrar.messenger)
+
+        _bootstrapChannel = FlutterMethodChannel(
+            name: "multi_window_manager",
+            binaryMessenger: registrar.messenger
+        )
         _bootstrapChannel?.setMethodCallHandler(handle)
         windowManager.channel = _bootstrapChannel
     }
-    
-    private func ensureInitialized(windowId: Int64) {
-        if (!_inited) {
-            windowManager.id = windowId;
+
+    private func ensureInitialized(windowId: Int64, isEnabledReuse: Bool = false) {
+        if !_inited {
+            windowManager.id = windowId
             windowManager.mainWindow = mainWindow
-            
-            // The bootstrap channel (_bootstrapChannel) keeps its handler so that
-            // hot restarts can call ensureInitialized again without MissingPluginException.
-            let perWindowChannel = FlutterMethodChannel(name: "window_manager_plus_\(windowManager.id)", binaryMessenger: registrar.messenger)
+            windowManager.isReuseEnabled = isEnabledReuse
+
+            // Bootstrap channel keeps its handler so hot restarts can call
+            // ensureInitialized again without MissingPluginException.
+            let perWindowChannel = FlutterMethodChannel(
+                name: "multi_window_manager_\(windowManager.id)",
+                binaryMessenger: registrar.messenger
+            )
             perWindowChannel.setMethodCallHandler(handle)
             windowManager.channel = perWindowChannel
-            
-            WindowManagerPlus.windowManagers[windowId] = windowManager
+
+            MultiWindowManager.windowManagers[windowId] = windowManager
             _inited = true
         }
     }
-    
+
     public func staticHandle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let methodName: String = call.method
         let args: [String: Any] = call.arguments as? [String: Any] ?? [:]
-        
-        switch (methodName) {
+
+        switch methodName {
         case "createWindow":
             let encodedArgs = args["args"] as? [String] ?? []
-            let windowId = WindowManagerPlus.createWindow(args: encodedArgs)
+            let windowId = MultiWindowManager.createWindow(args: encodedArgs)
             result(windowId >= 0 ? windowId : nil)
-            break
+
         case "getAllWindowManagerIds":
-            let keys = Array<Int64>(WindowManagerPlus.windowManagers.keys.filter { key in
-                return WindowManagerPlus.windowManagers[key] != nil
+            let keys = Array<Int64>(MultiWindowManager.windowManagers.keys.filter {
+                MultiWindowManager.windowManagers[$0] != nil
             })
             result(keys)
-            break
+
+        case "getActiveWindowIds":
+            // Returns IDs of windows that are not hidden for reuse.
+            // A window is considered active when it is not a hidden reuse-enabled window.
+            var activeIds: [Int64] = []
+            for (key, value) in MultiWindowManager.windowManagers {
+                if let wm = value {
+                    let isHidden = wm.isReuseEnabled && !wm.isVisible() && !wm.isBeingReused
+                    if !isHidden {
+                        activeIds.append(key)
+                    }
+                }
+            }
+            result(activeIds)
+
+        case "getHiddenWindowIds":
+            // Returns IDs of reuse-enabled windows that are currently invisible
+            // and not yet claimed by a concurrent createWindowOrReuse() call.
+            var hiddenIds: [Int64] = []
+            for (key, value) in MultiWindowManager.windowManagers {
+                if let wm = value {
+                    if wm.isReuseEnabled && !wm.isVisible() && !wm.isBeingReused {
+                        hiddenIds.append(key)
+                    }
+                }
+            }
+            result(hiddenIds)
+
+        case "claimWindow":
+            // Atomically marks a hidden reuse-enabled window as "being reused" to
+            // prevent concurrent callers from claiming the same window.
+            // The claim is released in MultiWindowManager.show() when isBeingReused is reset.
+            let targetId = windowIdFromArgs(args, key: "windowId")
+            if targetId >= 0,
+               let optional = MultiWindowManager.windowManagers[targetId],
+               let wm = optional,
+               wm.isReuseEnabled && !wm.isVisible() && !wm.isBeingReused
+            {
+                wm.isBeingReused = true
+                result(true)
+            } else {
+                result(false)
+            }
+
         default:
             result(FlutterMethodNotImplemented)
         }
     }
-    
+
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let methodName: String = call.method
         let args: [String: Any] = call.arguments as? [String: Any] ?? [:]
-        let windowId = args["windowId"] as? Int64 ?? -1;
-        
+        let windowId = windowIdFromArgs(args, key: "windowId")
+
         var wManager = windowManager
-        if windowId >= 0, let wm = WindowManagerPlus.windowManagers[windowId], let wm2 = wm {
-            wManager = wm2
+        if windowId >= 0,
+           let optional = MultiWindowManager.windowManagers[windowId],
+           let wm = optional
+        {
+            wManager = wm
         }
-        
-        switch (methodName) {
+
+        switch methodName {
         case "ensureInitialized":
-            if (windowId >= 0) {
-                ensureInitialized(windowId: windowId)
+            if windowId >= 0 {
+                let isEnabledReuse = args["isEnabledReuse"] as? Bool ?? false
+                ensureInitialized(windowId: windowId, isEnabledReuse: isEnabledReuse)
                 result(true)
                 windowManager.emitGlobalEvent("initialized")
             } else {
-                result(FlutterError(code: "0", message: "Cannot ensureInitialized! windowId >= 0 is required", details: nil))
+                result(FlutterError(
+                    code: "0",
+                    message: "Cannot ensureInitialized! windowId >= 0 is required",
+                    details: nil
+                ))
             }
-            break
+
         case "invokeMethodToWindow":
-            if let targetWindowId = args["targetWindowId"] as? Int64, let wm = WindowManagerPlus.windowManagers[targetWindowId], let wm2 = wm {
-                wm2.channel?.invokeMethod("onEvent", arguments: args["args"]) {(value) -> Void in
+            let targetId = windowIdFromArgs(args, key: "targetWindowId")
+            if let optional = MultiWindowManager.windowManagers[targetId],
+               let wm = optional
+            {
+                wm.channel?.invokeMethod("onEvent", arguments: args["args"]) { value in
                     if value is FlutterError {
                         result(value)
-                    }
-                    else if (value as? NSObject) == FlutterMethodNotImplemented {
+                    } else if (value as? NSObject) == FlutterMethodNotImplemented {
                         result(FlutterMethodNotImplemented)
-                    }
-                    else {
+                    } else {
                         result(value)
                     }
                 }
             } else {
-                result(FlutterError(code: "0", message: "Cannot invokeMethodToWindow! targetWindowId not found", details: nil))
+                result(FlutterError(
+                    code: "0",
+                    message: "Cannot invokeMethodToWindow! targetWindowId not found",
+                    details: nil
+                ))
             }
-            break
+
         case "waitUntilReadyToShow":
             wManager.waitUntilReadyToShow()
             result(true)
-            break
+
         case "setAsFrameless":
             wManager.setAsFrameless()
             result(true)
-            break
+
         case "destroy":
             wManager.destroy()
             result(true)
-            break
+
         case "close":
             wManager.close()
             result(true)
-            break
+
         case "isPreventClose":
             result(wManager.isPreventClose())
-            break
+
         case "setPreventClose":
             wManager.setPreventClose(args)
             result(true)
-            break
+
         case "focus":
             wManager.focus()
             result(true)
-            break
+
         case "blur":
             wManager.blur()
             result(true)
-            break
+
         case "isFocused":
             result(wManager.isFocused())
-            break
+
         case "show":
-            wManager.show()
+            wManager.show(args)
             result(true)
-            break
+
         case "hide":
             wManager.hide()
             result(true)
-            break
+
         case "isVisible":
             result(wManager.isVisible())
-            break
+
         case "isMaximized":
             result(wManager.isMaximized())
-            break
+
         case "maximize":
             wManager.maximize()
             result(true)
-            break
+
         case "unmaximize":
             wManager.unmaximize()
             result(true)
-            break
+
         case "isMinimized":
             result(wManager.isMinimized())
-            break
+
         case "isMaximizable":
             result(wManager.isMaximizable())
-            break
+
         case "setMaximizable":
             wManager.setIsMaximizable(args)
             result(true)
-            break
+
         case "minimize":
             wManager.minimize()
             result(true)
-            break
+
         case "restore":
             wManager.restore()
             result(true)
-            break
+
         case "isDockable":
             result(wManager.isDockable())
-            break
+
         case "isDocked":
             result(wManager.isDocked())
-            break
+
         case "dock":
             wManager.dock(args)
             result(true)
-            break
+
         case "undock":
             wManager.undock()
             result(true)
-            break
+
         case "isFullScreen":
             result(wManager.isFullScreen())
-            break
+
         case "setFullScreen":
             wManager.setFullScreen(args)
             result(true)
-            break
+
         case "setAspectRatio":
             wManager.setAspectRatio(args)
             result(true)
-            break
+
         case "setBackgroundColor":
             wManager.setBackgroundColor(args)
             result(true)
-            break
+
         case "getBounds":
             result(wManager.getBounds())
-            break
+
         case "setBounds":
             wManager.setBounds(args)
             result(true)
-            break
+
         case "setMinimumSize":
             wManager.setMinimumSize(args)
             result(true)
-            break
+
         case "setMaximumSize":
             wManager.setMaximumSize(args)
             result(true)
-            break
+
         case "isResizable":
             result(wManager.isResizable())
-            break
+
         case "setResizable":
             wManager.setResizable(args)
             result(true)
-            break
+
         case "isMovable":
             result(wManager.isMovable())
-            break
+
         case "setMovable":
             wManager.setMovable(args)
             result(true)
-            break
+
         case "isMinimizable":
             result(wManager.isMinimizable())
-            break
+
         case "setMinimizable":
             wManager.setMinimizable(args)
             result(true)
-            break
+
         case "isClosable":
             result(wManager.isClosable())
-            break
+
         case "setClosable":
             wManager.setClosable(args)
             result(true)
-            break
+
         case "isAlwaysOnTop":
             result(wManager.isAlwaysOnTop())
-            break
+
         case "setAlwaysOnTop":
             wManager.setAlwaysOnTop(args)
             result(true)
-            break
+
+        case "isAlwaysOnBottom":
+            result(wManager.isAlwaysOnBottom())
+
+        case "setAlwaysOnBottom":
+            wManager.setAlwaysOnBottom(args)
+            result(true)
+
         case "getTitle":
             result(wManager.getTitle())
-            break
+
         case "setTitle":
             wManager.setTitle(args)
             result(true)
-            break
+
         case "setTitleBarStyle":
             wManager.setTitleBarStyle(args)
             result(true)
-            break
+
         case "getTitleBarHeight":
             result(wManager.getTitleBarHeight())
-            break
+
         case "isSkipTaskbar":
             result(wManager.isSkipTaskbar())
-            break
+
         case "setSkipTaskbar":
             wManager.setSkipTaskbar(args)
             result(true)
-            break
+
         case "setBadgeLabel":
             wManager.setBadgeLabel(args)
             result(true)
-            break
+
         case "setProgressBar":
             wManager.setProgressBar(args)
             result(true)
-            break
+
         case "isVisibleOnAllWorkspaces":
             result(wManager.isVisibleOnAllWorkspaces())
-            break
+
         case "setVisibleOnAllWorkspaces":
             wManager.setVisibleOnAllWorkspaces(args)
             result(true)
-            break
+
         case "hasShadow":
             result(wManager.hasShadow())
-            break
+
         case "setHasShadow":
             wManager.setHasShadow(args)
             result(true)
-            break
+
         case "getOpacity":
             result(wManager.getOpacity())
-            break
+
         case "setOpacity":
             wManager.setOpacity(args)
             result(true)
-            break
+
         case "setBrightness":
             wManager.setBrightness(args)
             result(true)
-            break
+
         case "setIgnoreMouseEvents":
             wManager.setIgnoreMouseEvents(args)
             result(true)
-            break
+
+        case "setIcon":
+            wManager.setIcon(args)
+            result(true)
+
+        case "popUpWindowMenu":
+            wManager.popUpWindowMenu()
+            result(true)
+
         case "startDragging":
             wManager.startDragging()
             result(true)
-            break
+
+        case "startResizing":
+            wManager.startResizing(args)
+            result(true)
+
         default:
             result(FlutterMethodNotImplemented)
         }
     }
-    
+
+    // Extracts an Int64 window ID from a method call argument dictionary.
+    // Handles both Int (32-bit Dart ints) and Int64 (large Dart ints) codec values.
+    private func windowIdFromArgs(_ args: [String: Any], key: String) -> Int64 {
+        if let v = args[key] as? Int64 { return v }
+        if let v = args[key] as? Int { return Int64(v) }
+        if let v = args[key] as? NSNumber { return v.int64Value }
+        return -1
+    }
+
     deinit {
-        debugPrint("WindowManagerPluginPlus dealloc")
+        debugPrint("MultiWindowManagerPlugin dealloc")
     }
 }

@@ -1,13 +1,13 @@
 #
 # To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
-# Run `pod lib lint window_manager.podspec` to validate before publishing.
+# Run `pod lib lint multi_window_manager.podspec` to validate before publishing.
 #
 Pod::Spec.new do |s|
-  s.name             = 'window_manager_plus'
+  s.name             = 'multi_window_manager'
   s.version          = '0.0.1'
-  s.summary          = 'A new flutter plugin project.'
+  s.summary          = 'A Flutter plugin for managing multiple windows on desktop platforms.'
   s.description      = <<-DESC
-A new flutter plugin project.
+A Flutter plugin for managing multiple windows on desktop platforms.
                        DESC
   s.homepage         = 'http://example.com'
   s.license          = { :file => '../LICENSE' }
