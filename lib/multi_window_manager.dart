@@ -7,6 +7,8 @@ export 'src/widgets/reusable_window.dart';
 export 'src/widgets/virtual_window_frame.dart';
 export 'src/widgets/window_caption.dart';
 export 'src/widgets/window_caption_button.dart';
+export 'src/window_ipc.dart';
+export 'src/window_ipc_change_notifier.dart';
 export 'src/window_listener.dart';
 export 'src/window_manager.dart';
 export 'src/window_options.dart';

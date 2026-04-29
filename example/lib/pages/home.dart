@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_print
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,6 +11,58 @@ import 'package:preference_list/preference_list.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'package:multi_window_manager_example/utils/config.dart';
+
+// ---------------------------------------------------------------------------
+// IPC demo notifiers
+// ---------------------------------------------------------------------------
+
+/// Source notifier. Uses [IpcNotifierSender] to broadcast field-level deltas.
+/// Simultaneous changes to name AND age are batched into one IPC message.
+class _PersonNotifier extends ChangeNotifier with IpcNotifierSender {
+  String _name = 'Alice';
+  int _age = 30;
+
+  String get name => _name;
+
+  set name(String v) {
+    _name = v;
+    notifyListeners();
+    ipcMark('name', v);
+  }
+
+  int get age => _age;
+
+  set age(int v) {
+    _age = v;
+    notifyListeners();
+    ipcMark('age', v);
+  }
+}
+
+/// Receiver notifier. Uses [IpcNotifierReceiver] to apply incoming deltas.
+/// [notifyListeners] is called once per batch regardless of field count.
+class _PersonReceiverNotifier extends ChangeNotifier with IpcNotifierReceiver {
+  String name = 'not connected';
+  int age = 0;
+
+  @override
+  void ipcApplyField(String field, Object? value) {
+    switch (field) {
+      case 'name':
+        name = value as String;
+      case 'age':
+        age = value as int;
+    }
+  }
+
+  @override
+  void dispose() {
+    ipcCancelListeners();
+    super.dispose();
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 const _kSizes = [
   Size(400, 400),
@@ -38,6 +91,42 @@ const _kIconTypeDefault = 'default';
 const _kIconTypeOriginal = 'original';
 
 class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
+  // Mixin approach
+  final _PersonNotifier _personSender = _PersonNotifier();
+  final _PersonReceiverNotifier _personReceiver = _PersonReceiverNotifier();
+
+  // Raw approach
+  final Map<int, StreamSubscription<List<Object?>>> _rawSubs = {};
+  List<Object?> _lastRawPayload = [];
+  int _rawSendCounter = 0;
+
+  // invokeMethodToWindow demo
+  String _invokeLastReceived = '';
+  String _invokeLastResponse = '';
+
+  // Benchmarks
+  bool _benchRunning = false;
+
+  // IPC bench — sender side
+  String _ipcBenchSendResult = '';
+
+  // IPC bench — receiver side
+  int _ipcBenchRecvCount = 0;
+  String _ipcBenchRecvResult = '';
+  Stopwatch? _ipcBenchRecvWatch;
+  Timer? _ipcBenchRecvTimer;
+
+  // Invoke bench — sender side
+  String _invokeBenchSendResult = '';
+
+  // Invoke bench — receiver side
+  int _invokeBenchRecvCount = 0;
+  String _invokeBenchRecvResult = '';
+  Stopwatch? _invokeBenchRecvWatch;
+  Timer? _invokeBenchRecvTimer;
+
+  // ---------------------------------------------------------------------------
+
   bool _isPreventClose = false;
   Size _size = _kSizes.first;
   Size? _minSize;
@@ -67,12 +156,60 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
     trayManager.addListener(this);
     MultiWindowManager.current.addListener(this);
     // MultiWindowManager.addGlobalListener(this);
+    final ipc = MultiWindowManager.current.ipc;
+    _personSender.ipcSetup(ipc, 'person');
+    _personReceiver.addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    // When another window connects TO us, reactively set up our receiver
+    // and raw listener for that window.
+    ipc.onConnected = (int fromId) {
+      debugPrint(
+          '[Demo:${MultiWindowManager.current.id}] onConnected from $fromId -> setting up listeners');
+      _personReceiver.ipcListen(ipc, fromId, 'person');
+      _rawSubs[fromId] = ipc.listenWindow(fromId).listen((payload) {
+        // Route bench messages to the bench counter, everything else to lastRaw.
+        if (payload.isNotEmpty && payload[0] == 'bench_ipc') {
+          _onIpcBenchMessage(payload);
+        } else {
+          final nowMs = DateTime.now().microsecondsSinceEpoch;
+          int? ts;
+          int? diff;
+          if (payload.contains('ts')) {
+            final tsIndex = payload.indexOf('ts');
+            ts = payload[tsIndex + 1] as int;
+          }
+          if (ts != null) {
+            diff = nowMs - ts;
+          }
+          setState(
+              () => _lastRawPayload = [...payload, 'diff', diff, 'now', nowMs]);
+        }
+      });
+      if (mounted) setState(() {});
+    };
+
+    ipc.onDisconnected = (int fromId) {
+      debugPrint(
+          '[Demo:${MultiWindowManager.current.id}] onDisconnected from $fromId');
+      _rawSubs.remove(fromId)?.cancel();
+      if (mounted) setState(() {});
+    };
     _init();
     super.initState();
   }
 
   @override
   void dispose() {
+    _ipcBenchRecvTimer?.cancel();
+    _invokeBenchRecvTimer?.cancel();
+    _personSender.dispose();
+    _personReceiver.dispose();
+    for (final sub in _rawSubs.values) {
+      sub.cancel();
+    }
+    // ipc lifetime is managed by MultiWindowManager — no dispose needed here.
     _methodNameController.dispose();
     _firstArgController.dispose();
     trayManager.removeListener(this);
@@ -120,6 +257,135 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
     }
 
     await MultiWindowManager.current.setIcon(iconPath);
+  }
+
+  /// Connects this window to [targetId].
+  ///
+  /// After this call this window can send IPC messages to [targetId].
+  /// The target window's [onConnected] callback fires on the OTHER side,
+  /// setting up its receiver listeners reactively. Idempotent.
+  Future<void> _ipcConnect(int targetId) async {
+    final ipc = MultiWindowManager.current.ipc;
+    if (ipc.connectedWindowIds.contains(targetId)) {
+      BotToast.showText(text: 'IPC: already connected to $targetId');
+      return;
+    }
+    final ok = await ipc.connectWindow(targetId);
+    if (!ok) {
+      BotToast.showText(text: 'IPC: window $targetId not ready');
+      return;
+    }
+
+    // Set up THIS window's receiver to also listen FROM the target window,
+    // so that updates sent by targetId are reflected here as well.
+    _personReceiver.ipcListen(ipc, targetId, 'person');
+    _rawSubs[targetId] = ipc.listenWindow(targetId).listen((payload) {
+      if (payload.isNotEmpty && payload[0] == 'bench_ipc') {
+        _onIpcBenchMessage(payload);
+      } else {
+        setState(() => _lastRawPayload = payload);
+      }
+    });
+
+    setState(() {});
+    BotToast.showText(text: 'IPC: connected to window $targetId');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Benchmark helpers
+  // ---------------------------------------------------------------------------
+
+  static String _fmtRate(int count, int elapsedMs) {
+    if (elapsedMs == 0) return '$count msgs in <1ms';
+    final rate = (count * 1000 / elapsedMs).round();
+    return '$count msgs in ${elapsedMs}ms  ($rate msg/s)';
+  }
+
+  /// Called on the RECEIVER side for every IPC bench message.
+  void _onIpcBenchMessage(List<Object?> msg) {
+    _ipcBenchRecvCount++;
+    _ipcBenchRecvWatch ??= Stopwatch()..start();
+    // Finalize 300ms after the last message.
+    _ipcBenchRecvTimer?.cancel();
+    _ipcBenchRecvTimer = Timer(const Duration(milliseconds: 300), () {
+      final ms = _ipcBenchRecvWatch!.elapsedMilliseconds;
+      if (mounted) {
+        setState(() {
+          _ipcBenchRecvResult = _fmtRate(_ipcBenchRecvCount, ms);
+          _ipcBenchRecvCount = 0;
+          _ipcBenchRecvWatch = null;
+        });
+      }
+    });
+  }
+
+  /// Called on the RECEIVER side for every invoke bench call.
+  void _onInvokeBenchReceived() {
+    _invokeBenchRecvCount++;
+    _invokeBenchRecvWatch ??= Stopwatch()..start();
+    _invokeBenchRecvTimer?.cancel();
+    _invokeBenchRecvTimer = Timer(const Duration(milliseconds: 300), () {
+      final ms = _invokeBenchRecvWatch!.elapsedMilliseconds;
+      if (mounted) {
+        setState(() {
+          _invokeBenchRecvResult = _fmtRate(_invokeBenchRecvCount, ms);
+          _invokeBenchRecvCount = 0;
+          _invokeBenchRecvWatch = null;
+        });
+      }
+    });
+  }
+
+  /// IPC bench: fire [n] messages without awaiting — measures raw send throughput.
+  Future<void> _runIpcBench(int n) async {
+    final ipc = MultiWindowManager.current.ipc;
+    if (ipc.connectedWindowIds.isEmpty) {
+      BotToast.showText(text: 'IPC bench: connect to a window first');
+      return;
+    }
+    setState(() {
+      _benchRunning = true;
+      _ipcBenchSendResult = 'sending $n...';
+    });
+    final sw = Stopwatch()..start();
+    for (int i = 0; i < n; i++) {
+      for (final id in ipc.connectedWindowIds) {
+        // fire-and-forget — no await
+        ipc.notifyWindow(id, ['bench_ipc', i]);
+      }
+    }
+    sw.stop();
+    setState(() {
+      _benchRunning = false;
+      _ipcBenchSendResult = 'SEND  ${_fmtRate(n, sw.elapsedMilliseconds)}';
+    });
+  }
+
+  /// Invoke bench: await each call — measures full round-trip throughput.
+  Future<void> _runInvokeBench(int n) async {
+    final otherIds = (await MultiWindowManager.current.getActiveWindowIds())
+        .where((id) => id != MultiWindowManager.current.id)
+        .toList()
+      ..sort();
+    if (otherIds.isEmpty) {
+      BotToast.showText(text: 'Invoke bench: open another window first');
+      return;
+    }
+    final targetId = otherIds.first;
+    setState(() {
+      _benchRunning = true;
+      _invokeBenchSendResult = 'sending $n (await each)...';
+    });
+    final sw = Stopwatch()..start();
+    for (int i = 0; i < n; i++) {
+      await MultiWindowManager.current
+          .invokeMethodToWindow(targetId, 'bench_invoke', i);
+    }
+    sw.stop();
+    setState(() {
+      _benchRunning = false;
+      _invokeBenchSendResult = 'SEND  ${_fmtRate(n, sw.elapsedMilliseconds)}';
+    });
   }
 
   Widget _buildBody(BuildContext context) {
@@ -824,7 +1090,7 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                   text: title.toString(),
                 );
                 title =
-                    'Window ID ${MultiWindowManager.current.id} - ${DateTime.now().millisecondsSinceEpoch}';
+                    'Window ID ${MultiWindowManager.current.id} - ${DateTime.now().microsecondsSinceEpoch}';
                 await MultiWindowManager.current.setTitle(title);
               },
             ),
@@ -1043,6 +1309,255 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             // ),
           ],
         ),
+
+        // -----------------------------------------------------------------
+        // invokeMethodToWindow section
+        // -----------------------------------------------------------------
+        PreferenceListSection(
+          title: const Text('invokeMethodToWindow'),
+          children: [
+            // Send
+            PreferenceListItem(
+              title: const Text('Send: invoke method on another window'),
+              detailText: Text(
+                _invokeLastResponse.isEmpty
+                    ? 'tap to select target and send'
+                    : 'last response: $_invokeLastResponse',
+              ),
+              onTap: () async {
+                final otherIds = (await MultiWindowManager.current
+                        .getActiveWindowIds())
+                    .where((id) => id != MultiWindowManager.current.id)
+                    .toList()
+                  ..sort();
+                if (otherIds.isEmpty) {
+                  BotToast.showText(text: 'No other windows open');
+                  return;
+                }
+                final selected = await showDialog<int>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Select target window'),
+                    content: SizedBox(
+                      width: 260,
+                      height: 200,
+                      child: ListView(
+                        children: [
+                          for (final id in otherIds)
+                            ListTile(
+                              title: Text('Window $id'),
+                              onTap: () => Navigator.of(context).pop(id),
+                            ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                );
+                if (selected == null) return;
+                final response = await MultiWindowManager.current
+                    .invokeMethodToWindow(selected, 'greet', {
+                  'from': MultiWindowManager.current.id,
+                  'ts': DateTime.now().microsecondsSinceEpoch,
+                });
+                setState(() => _invokeLastResponse = '$response');
+                BotToast.showText(text: 'Response from $selected: $response');
+              },
+            ),
+
+            // Received
+            PreferenceListItem(
+              title: const Text('Received: last invocation on this window'),
+              detailText: Text(
+                _invokeLastReceived.isEmpty
+                    ? 'nothing yet'
+                    : _invokeLastReceived,
+              ),
+              onTap: () {},
+            ),
+          ],
+        ),
+
+        // -----------------------------------------------------------------
+        // IPC section
+        // -----------------------------------------------------------------
+        PreferenceListSection(
+          title: const Text('IPC'),
+          children: [
+            // --- Connection -----------------------------------------------
+            PreferenceListItem(
+              title: const Text('connectWindow'),
+              detailText: Text(
+                MultiWindowManager.current.ipc.connectedWindowIds.isEmpty
+                    ? 'not connected'
+                    : 'connected: ${MultiWindowManager.current.ipc.connectedWindowIds}',
+              ),
+              onTap: () async {
+                final otherIds = (await MultiWindowManager.current
+                        .getActiveWindowIds())
+                    .where((id) => id != MultiWindowManager.current.id)
+                    .toList()
+                  ..sort();
+                if (otherIds.isEmpty) {
+                  BotToast.showText(text: 'No other windows open');
+                  return;
+                }
+                final selected = await showDialog<int>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Select window to connect IPC'),
+                    content: SizedBox(
+                      width: 260,
+                      height: 200,
+                      child: ListView(
+                        children: [
+                          for (final id in otherIds)
+                            ListTile(
+                              title: Text('Window $id'),
+                              onTap: () => Navigator.of(context).pop(id),
+                            ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                );
+                if (selected != null) await _ipcConnect(selected);
+              },
+            ),
+
+            // --- Mixin approach -------------------------------------------
+            PreferenceListItem(
+              title: const Text('[Mixin] Send person update'),
+              detailText: Text(
+                'sending  name=${_personSender.name}  age=${_personSender.age}',
+              ),
+              onTap: () {
+                if (MultiWindowManager.current.ipc.connectedWindowIds.isEmpty) {
+                  BotToast.showText(text: 'IPC: connect to a window first');
+                  return;
+                }
+                // Both fields change synchronously -> one batched IPC message.
+                _personSender.name = 'User_${DateTime.now().second}';
+                _personSender.age = 20 + DateTime.now().millisecond % 40;
+                setState(() {});
+              },
+            ),
+            PreferenceListItem(
+              title: const Text('[Mixin] Received person'),
+              detailText: Text(
+                'name=${_personReceiver.name}  age=${_personReceiver.age}',
+              ),
+              onTap: () {},
+            ),
+
+            // --- Raw approach ---------------------------------------------
+            PreferenceListItem(
+              title: const Text('[Raw] Send counter + timestamp'),
+              detailText: Text('counter: $_rawSendCounter'),
+              onTap: () async {
+                final ipc = MultiWindowManager.current.ipc;
+                if (ipc.connectedWindowIds.isEmpty) {
+                  BotToast.showText(text: 'IPC: connect to a window first');
+                  return;
+                }
+                _rawSendCounter++;
+                // Wire format: ['raw', field1, val1, field2, val2, ...]
+                // 'raw' is the topic; the rest are arbitrary key-value pairs.
+                final payload = <Object?>[
+                  'raw',
+                  'counter',
+                  _rawSendCounter,
+                  'ts',
+                  DateTime.now().microsecondsSinceEpoch,
+                ];
+                for (final id in ipc.connectedWindowIds) {
+                  await ipc.notifyWindow(id, payload);
+                }
+                setState(() {});
+              },
+            ),
+            PreferenceListItem(
+              title: const Text('[Raw] Last received'),
+              detailText: Text(
+                _lastRawPayload.isEmpty ? 'nothing yet' : '$_lastRawPayload',
+              ),
+              onTap: () {},
+            ),
+          ],
+        ),
+
+        // -----------------------------------------------------------------
+        // Benchmark section — IPC vs invokeMethodToWindow throughput
+        // -----------------------------------------------------------------
+        PreferenceListSection(
+          title: const Text('BENCHMARK: IPC vs invokeMethodToWindow'),
+          children: [
+            // --- IPC (fire-and-forget) ------------------------------------
+            PreferenceListItem(
+              title: const Text('[IPC] Send 1 000 messages (fire-and-forget)'),
+              detailText: Text(
+                _ipcBenchSendResult.isEmpty
+                    ? 'tap to run'
+                    : _ipcBenchSendResult,
+              ),
+              accessoryView: _benchRunning
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+              onTap: _benchRunning ? null : () => _runIpcBench(1000),
+            ),
+            PreferenceListItem(
+              title: const Text('[IPC] Received'),
+              detailText: Text(
+                _ipcBenchRecvResult.isEmpty
+                    ? 'nothing yet'
+                    : _ipcBenchRecvResult,
+              ),
+              onTap: () {},
+            ),
+
+            // --- invokeMethodToWindow (await each) ------------------------
+            PreferenceListItem(
+              title: const Text('[Invoke] Send 1000 messages (await each)'),
+              detailText: Text(
+                _invokeBenchSendResult.isEmpty
+                    ? 'tap to run (slower — awaits response per call)'
+                    : _invokeBenchSendResult,
+              ),
+              accessoryView: _benchRunning
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+              onTap: _benchRunning ? null : () => _runInvokeBench(1000),
+            ),
+            PreferenceListItem(
+              title: const Text('[Invoke] Received'),
+              detailText: Text(
+                _invokeBenchRecvResult.isEmpty
+                    ? 'nothing yet'
+                    : _invokeBenchRecvResult,
+              ),
+              onTap: () {},
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -1227,9 +1742,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
   @override
   Future<dynamic> onEventFromWindow(
       String eventName, int fromWindowId, dynamic arguments) async {
-    BotToast.showText(
-        text:
-            '[${MultiWindowManager.current}] Event $eventName from Window $fromWindowId with arguments $arguments');
-    return 'Hello from ${MultiWindowManager.current}';
+    if (eventName == 'bench_invoke') {
+      // Bench message: count only, no toast or setState to avoid UI overhead.
+      _onInvokeBenchReceived();
+      return 'ok';
+    }
+    final msg = 'method=$eventName  from=$fromWindowId  args=$arguments';
+    BotToast.showText(text: '[${MultiWindowManager.current}] $msg');
+    if (mounted) {
+      setState(() => _invokeLastReceived = msg);
+    }
+    return 'Hello from window ${MultiWindowManager.current.id}';
   }
 }

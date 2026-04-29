@@ -10,6 +10,7 @@ import 'package:multi_window_manager/src/resize_edge.dart';
 import 'package:multi_window_manager/src/reuse_window_listener.dart';
 import 'package:multi_window_manager/src/title_bar_style.dart';
 import 'package:multi_window_manager/src/utils/calc_window_position.dart';
+import 'package:multi_window_manager/src/window_ipc.dart';
 import 'package:multi_window_manager/src/window_listener.dart';
 import 'package:multi_window_manager/src/window_options.dart';
 import 'package:multi_window_manager/src/window_registry.dart';
@@ -77,7 +78,8 @@ class MultiWindowManager {
         _channel = _current!._channel {}
 
   final MethodChannel _channel;
-  static const MethodChannel _staticChannel = MethodChannel('multi_window_manager_static');
+  static const MethodChannel _staticChannel =
+      MethodChannel('multi_window_manager_static');
 
   int _id;
 
@@ -89,9 +91,31 @@ class MultiWindowManager {
   /// [ensureInitialized] must be called before accessing this.
   static MultiWindowManager get current => _current!;
 
-  final ObserverList<WindowListener> _listeners = ObserverList<WindowListener>();
+  /// The IPC channel for this window.
+  ///
+  /// Created lazily on first access and reused for the lifetime of the window.
+  /// The payload type is fixed to [List<Object?>] — a flat list with no
+  /// serialization overhead, suitable for high-frequency updates.
+  ///
+  /// Example:
+  /// ```dart
+  /// // Send
+  /// await MultiWindowManager.current.ipc.notifyWindow(targetId, ['key', value]);
+  ///
+  /// // Receive
+  /// MultiWindowManager.current.ipc.listenWindow(sourceId).listen(print);
+  ///
+  /// // Mixin setup
+  /// myNotifier.ipcSetup(MultiWindowManager.current.ipc, 'person');
+  /// ```
+  WindowIpc<List<Object?>> get ipc => _ipc ??= WindowIpc<List<Object?>>(this);
+  WindowIpc<List<Object?>>? _ipc;
 
-  static final ObserverList<WindowListener> _globalListeners = ObserverList<WindowListener>();
+  final ObserverList<WindowListener> _listeners =
+      ObserverList<WindowListener>();
+
+  static final ObserverList<WindowListener> _globalListeners =
+      ObserverList<WindowListener>();
 
   /// Internal listeners for reuse-lifecycle events only.
   /// Registered by [ReuseWindowState] via [addReuseListener].
@@ -113,7 +137,19 @@ class MultiWindowManager {
   /// Use [WindowRegistry.activeWindows] / [WindowRegistry.hiddenWindows]
   /// to drive reactive UI. For a guaranteed-fresh read, use
   /// [WindowRegistry.getActiveWindowIds] / [WindowRegistry.getHiddenWindowIds].
-  static final WindowRegistry registry = WindowRegistry();
+  static final WindowRegistry _registry = WindowRegistry();
+
+  Future<List<int>> getActiveWindowIds() async =>
+      _registry.getActiveWindowIds();
+
+  Future<List<int>> getHiddenWindowIds() async =>
+      _registry.getHiddenWindowIds();
+
+  ValueNotifier<List<int>> get activeWindows => _registry.activeWindows;
+
+  ValueNotifier<List<int>> get hiddenWindows => _registry.hiddenWindows;
+
+  bool get hasHiddenWindows => _registry.hasHiddenWindows;
 
   Future<dynamic> _methodCallHandler(MethodCall call) async {
     if (call.method != 'onEvent') throw UnimplementedError();
@@ -123,24 +159,26 @@ class MultiWindowManager {
 
     if (windowId != null) {
       if (eventName == kWindowEventInitialized) {
-        if (_completers[windowId] != null && !_completers[windowId]!.isCompleted) {
+        if (_completers[windowId] != null &&
+            !_completers[windowId]!.isCompleted) {
           _completers[windowId]?.complete();
         }
         _completers.remove(windowId);
-        await registry.refresh();
+        await _registry.refresh();
       } else if (eventName == kWindowEventClose) {
-        if (_completers[windowId] != null && !_completers[windowId]!.isCompleted) {
+        if (_completers[windowId] != null &&
+            !_completers[windowId]!.isCompleted) {
           _completers[windowId]?.complete();
         }
         _completers.remove(windowId);
-        await registry.refresh();
+        await _registry.refresh();
       } else if (eventName == kWindowEventReuseClose) {
         // Internal reuse event - refresh registry but don't expose to public listeners.
-        await registry.refresh();
+        await _registry.refresh();
         return null;
       } else if (eventName == kWindowEventReuseShow) {
         // Internal reuse event - refresh registry but don't expose to public listeners.
-        await registry.refresh();
+        await _registry.refresh();
         return null;
       }
 
@@ -171,20 +209,29 @@ class MultiWindowManager {
       }
 
       if (_current != null && _id != _current!.id) {
+        if (eventName == kEventFromWindow) {
+          final String method = call.arguments['method'];
+          final int fromWindowId = call.arguments['fromWindowId'];
+          final dynamic eventArguments = call.arguments['arguments'];
+          // Dispatch to ALL listeners so that internal handlers (e.g. WindowIpc)
+          // and user handlers both receive the event. First non-null result is
+          // returned to the caller.
+          dynamic result;
+          for (final WindowListener listener
+              in List<WindowListener>.from(_listeners)) {
+            try {
+              final r = await listener.onEventFromWindow(
+                  method, fromWindowId, eventArguments);
+              result ??= r;
+            } catch (_) {}
+          }
+          return result;
+        }
+
         for (final WindowListener listener in listeners) {
           if (!_listeners.contains(listener)) {
             break;
           }
-
-          if (eventName == kEventFromWindow) {
-            String method = call.arguments['method'];
-            int fromWindowId = call.arguments['fromWindowId'];
-            dynamic eventArguments = call.arguments['arguments'];
-            try {
-              return await listener.onEventFromWindow(method, fromWindowId, eventArguments);
-            } catch (_) {}
-          }
-
           listener.onWindowEvent(eventName);
           Map<String, Function> funcMap = {
             kWindowEventClose: listener.onWindowClose,
@@ -226,18 +273,28 @@ class MultiWindowManager {
         }
       }
 
+      if (eventName == kEventFromWindow) {
+        final String method = call.arguments['method'];
+        final int fromWindowId = call.arguments['fromWindowId'];
+        final dynamic eventArguments = call.arguments['arguments'];
+        // Dispatch to ALL listeners so that internal handlers (e.g. WindowIpc)
+        // and user handlers both receive the event. First non-null result is
+        // returned to the caller.
+        dynamic result;
+        for (final WindowListener listener
+            in List<WindowListener>.from(_listeners)) {
+          try {
+            final r = await listener.onEventFromWindow(
+                method, fromWindowId, eventArguments);
+            result ??= r;
+          } catch (_) {}
+        }
+        return result;
+      }
+
       for (final WindowListener listener in listeners) {
         if (!_listeners.contains(listener)) {
           break;
-        }
-
-        if (eventName == kEventFromWindow) {
-          String method = call.arguments['method'];
-          int fromWindowId = call.arguments['fromWindowId'];
-          dynamic eventArguments = call.arguments['arguments'];
-          try {
-            return await listener.onEventFromWindow(method, fromWindowId, eventArguments);
-          } catch (_) {}
         }
 
         listener.onWindowEvent(eventName);
@@ -268,7 +325,8 @@ class MultiWindowManager {
 
   /// Get the window listeners.
   List<WindowListener> get listeners {
-    final List<WindowListener> localListeners = List<WindowListener>.from(_listeners);
+    final List<WindowListener> localListeners =
+        List<WindowListener>.from(_listeners);
     return localListeners;
   }
 
@@ -305,7 +363,8 @@ class MultiWindowManager {
 
   /// Get the global window listeners.
   static List<WindowListener> get globalListeners {
-    final List<WindowListener> localListeners = List<WindowListener>.from(_globalListeners);
+    final List<WindowListener> localListeners =
+        List<WindowListener>.from(_globalListeners);
     return localListeners;
   }
 
@@ -336,7 +395,8 @@ class MultiWindowManager {
     final Map<String, dynamic> arguments = {
       'args': args,
     };
-    int? windowId = await _staticChannel.invokeMethod('createWindow', arguments);
+    int? windowId =
+        await _staticChannel.invokeMethod('createWindow', arguments);
     if (windowId == null) {
       return null;
     }
@@ -365,7 +425,7 @@ class MultiWindowManager {
   /// The target window must use [ReuseWindow] (or equivalent logic) to
   /// handle [kWindowEventShowWindow] and reinitialize its content.
   ///
-  /// The Dart-level [registry] is updated locally in the calling window's
+  /// The Dart-level [_registry] is updated locally in the calling window's
   /// isolate for use by [WindowRegistry.activeWindows] /
   /// [WindowRegistry.hiddenWindows] notifiers; other windows update their
   /// registries via the global [kWindowEventReuseClose] / [kWindowEventInitialized]
@@ -387,7 +447,7 @@ class MultiWindowManager {
       } catch (e) {
         log('createWindowOrReuse: reuse of window $id failed ($e), trying next',
             name: 'MultiWindowManager');
-        await registry.refresh();
+        await _registry.refresh();
       }
     }
 
@@ -401,7 +461,8 @@ class MultiWindowManager {
   ///
   /// Safe to call from any Flutter engine in the process.
   static Future<List<int>> _getNativeHiddenWindowIds() async {
-    return (await _staticChannel.invokeMethod<List<dynamic>>('getHiddenWindowIds'))
+    return (await _staticChannel
+                .invokeMethod<List<dynamic>>('getHiddenWindowIds'))
             ?.cast<int>() ??
         [];
   }
@@ -413,14 +474,17 @@ class MultiWindowManager {
   /// if the window is no longer available. The claim is automatically released
   /// when the window's native `Show()` is invoked.
   static Future<bool> _claimNativeWindow(int windowId) async {
-    return await _staticChannel.invokeMethod<bool>(
-            'claimWindow', {'windowId': windowId}) ??
+    return await _staticChannel
+            .invokeMethod<bool>('claimWindow', {'windowId': windowId}) ??
         false;
   }
 
   /// Get all window manager ids.
   static Future<List<int>> getAllWindowManagerIds() async {
-    return (await _staticChannel.invokeMethod<List<dynamic>>('getAllWindowManagerIds'))?.cast<int>() ?? [];
+    return (await _staticChannel
+                .invokeMethod<List<dynamic>>('getAllWindowManagerIds'))
+            ?.cast<int>() ??
+        [];
   }
 
   /// Get the window manager from the window id.
@@ -457,7 +521,8 @@ class MultiWindowManager {
   /// available for inner widgets because this mechanism is independent of
   /// [is_prevent_close_] - if [setPreventClose(true)] is set,
   /// [kWindowEventReuseClose] is suppressed until the user dismisses the dialog.
-  static Future<void> ensureInitializedSecondary(int windowId, {bool isEnabledReuse = false}) async {
+  static Future<void> ensureInitializedSecondary(int windowId,
+      {bool isEnabledReuse = false}) async {
     if (_current != null) return;
     final Map<String, dynamic> arguments = {
       'windowId': windowId,
@@ -471,7 +536,8 @@ class MultiWindowManager {
     _current = MultiWindowManager._(windowId);
   }
 
-  Future<T?> _invokeMethod<T>(String method, [Map<String, dynamic>? arguments]) {
+  Future<T?> _invokeMethod<T>(String method,
+      [Map<String, dynamic>? arguments]) {
     final Map<String, dynamic> args = _current?._id == _id
         ? {}
         : {
@@ -1131,14 +1197,18 @@ class MultiWindowManager {
       'startResizing',
       {
         'resizeEdge': resizeEdge.name,
-        'top': resizeEdge == ResizeEdge.top || resizeEdge == ResizeEdge.topLeft || resizeEdge == ResizeEdge.topRight,
+        'top': resizeEdge == ResizeEdge.top ||
+            resizeEdge == ResizeEdge.topLeft ||
+            resizeEdge == ResizeEdge.topRight,
         'bottom': resizeEdge == ResizeEdge.bottom ||
             resizeEdge == ResizeEdge.bottomLeft ||
             resizeEdge == ResizeEdge.bottomRight,
-        'right':
-            resizeEdge == ResizeEdge.right || resizeEdge == ResizeEdge.topRight || resizeEdge == ResizeEdge.bottomRight,
-        'left':
-            resizeEdge == ResizeEdge.left || resizeEdge == ResizeEdge.topLeft || resizeEdge == ResizeEdge.bottomLeft,
+        'right': resizeEdge == ResizeEdge.right ||
+            resizeEdge == ResizeEdge.topRight ||
+            resizeEdge == ResizeEdge.bottomRight,
+        'left': resizeEdge == ResizeEdge.left ||
+            resizeEdge == ResizeEdge.topLeft ||
+            resizeEdge == ResizeEdge.bottomLeft,
       },
     );
   }
@@ -1158,7 +1228,8 @@ class MultiWindowManager {
   /// Invokes a method on the window with id [targetWindowId].
   /// It could return a Future that resolves to the return value of the invoked method, otherwise `null`.
   /// Use [WindowListener.onEventFromWindow] to listen for the event.
-  Future<dynamic> invokeMethodToWindow(int targetWindowId, String method, [dynamic args]) async {
+  Future<dynamic> invokeMethodToWindow(int targetWindowId, String method,
+      [dynamic args]) async {
     final Map<String, dynamic> arguments = {
       'targetWindowId': targetWindowId,
       'args': {
