@@ -1,5 +1,6 @@
 // ignore_for_file: avoid_print
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bot_toast/bot_toast.dart';
@@ -57,7 +58,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
   String _iconType = _kIconTypeOriginal;
   bool _isVisibleOnAllWorkspaces = false;
 
-  final TextEditingController _methodNameController = TextEditingController(text: 'testMethodName');
+  final TextEditingController _methodNameController =
+      TextEditingController(text: 'testMethodName');
   final TextEditingController _firstArgController = TextEditingController();
 
   @override
@@ -81,7 +83,9 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
 
   Future<void> _init() async {
     await trayManager.setIcon(
-      Platform.isWindows ? 'images/tray_icon_original.ico' : 'images/tray_icon_original.png',
+      Platform.isWindows
+          ? 'images/tray_icon_original.ico'
+          : 'images/tray_icon_original.png',
     );
     Menu menu = Menu(
       items: [
@@ -106,10 +110,13 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
 
   Future<void> _handleSetIcon(String iconType) async {
     _iconType = iconType;
-    String iconPath = Platform.isWindows ? 'images/tray_icon.ico' : 'images/tray_icon.png';
+    String iconPath =
+        Platform.isWindows ? 'images/tray_icon.ico' : 'images/tray_icon.png';
 
     if (_iconType == 'original') {
-      iconPath = Platform.isWindows ? 'images/tray_icon_original.ico' : 'images/tray_icon_original.png';
+      iconPath = Platform.isWindows
+          ? 'images/tray_icon_original.ico'
+          : 'images/tray_icon_original.png';
     }
 
     await MultiWindowManager.current.setIcon(iconPath);
@@ -124,11 +131,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
               title: const Text('ThemeMode'),
               detailText: Text('${sharedConfig.themeMode}'),
               onTap: () async {
-                ThemeMode newThemeMode = sharedConfig.themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+                ThemeMode newThemeMode =
+                    sharedConfig.themeMode == ThemeMode.light
+                        ? ThemeMode.dark
+                        : ThemeMode.light;
 
                 await sharedConfigManager.setThemeMode(newThemeMode);
                 await MultiWindowManager.current.setBrightness(
-                  newThemeMode == ThemeMode.light ? Brightness.light : Brightness.dark,
+                  newThemeMode == ThemeMode.light
+                      ? Brightness.light
+                      : Brightness.dark,
                 );
                 setState(() {});
               },
@@ -139,31 +151,49 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
           title: const Text('METHODS'),
           children: [
             PreferenceListItem(
+              title: const Text('createReusableWindow'),
+              onTap: () async {
+                final newWindow =
+                    await MultiWindowManager.createWindowOrReuse(args: [
+                  'test args 1',
+                  'test args 2',
+                  jsonEncode({'isReusable': true})
+                ]);
+                BotToast.showText(
+                    text: 'New Created or Reused Window: $newWindow');
+              },
+            ),
+            PreferenceListItem(
               title: const Text('createWindow'),
               onTap: () async {
-                final newWindow = await MultiWindowManager.createWindowOrReuse(args: ['test args 1', 'test args 2']);
+                final newWindow = await MultiWindowManager.createWindow(
+                    ['test args 1', 'test args 2']);
                 BotToast.showText(text: 'New Created Window: $newWindow');
               },
             ),
             PreferenceListItem(
               title: const Text('getAllWindowManagerIds'),
               onTap: () async {
-                final windowManagerIds = await MultiWindowManager.getAllWindowManagerIds();
-                BotToast.showText(text: 'WindowManager ID List: $windowManagerIds');
+                final windowManagerIds =
+                    await MultiWindowManager.getAllWindowManagerIds();
+                BotToast.showText(
+                    text: 'WindowManager ID List: $windowManagerIds');
               },
             ),
             PreferenceListItem(
               title: const Text('invokeMethodToWindow'),
               onTap: () async {
-                final sortedWindowManagerIds = (await MultiWindowManager.getAllWindowManagerIds())
-                    .where((wId) => wId != MultiWindowManager.current.id)
-                    .toList();
+                final sortedWindowManagerIds =
+                    (await MultiWindowManager.getAllWindowManagerIds())
+                        .where((wId) => wId != MultiWindowManager.current.id)
+                        .toList();
                 sortedWindowManagerIds.sort();
                 int? selectedWindowTargetId = await showDialog(
                   context: context,
                   builder: (_) {
                     return AlertDialog(
-                      title: const Text('Select the Target Window to invoke the method'),
+                      title: const Text(
+                          'Select the Target Window to invoke the method'),
                       content: SizedBox(
                         width: 300,
                         height: 300,
@@ -204,11 +234,15 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 );
 
                 if (selectedWindowTargetId != null) {
-                  final response = await MultiWindowManager.current.invokeMethodToWindow(
-                      selectedWindowTargetId,
-                      _methodNameController.text,
-                      _firstArgController.text.trim().isNotEmpty ? [_firstArgController.text.trim()] : null);
-                  BotToast.showText(text: 'Response from $selectedWindowTargetId: $response');
+                  final response = await MultiWindowManager.current
+                      .invokeMethodToWindow(
+                          selectedWindowTargetId,
+                          _methodNameController.text,
+                          _firstArgController.text.trim().isNotEmpty
+                              ? [_firstArgController.text.trim()]
+                              : null);
+                  BotToast.showText(
+                      text: 'Response from $selectedWindowTargetId: $response');
                 }
               },
             ),
@@ -229,13 +263,15 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isPreventClose / setPreventClose'),
               onTap: () async {
-                _isPreventClose = await MultiWindowManager.current.isPreventClose();
+                _isPreventClose =
+                    await MultiWindowManager.current.isPreventClose();
                 BotToast.showText(text: 'isPreventClose: $_isPreventClose');
               },
               value: _isPreventClose,
               onChanged: (newValue) async {
                 _isPreventClose = newValue;
-                await MultiWindowManager.current.setPreventClose(_isPreventClose);
+                await MultiWindowManager.current
+                    .setPreventClose(_isPreventClose);
                 setState(() {});
               },
             ),
@@ -244,11 +280,13 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
               onTap: () async {
                 await MultiWindowManager.current.blur();
                 await Future.delayed(const Duration(seconds: 2));
-                print('isFocused: ${await MultiWindowManager.current.isFocused()}');
+                print(
+                    'isFocused: ${await MultiWindowManager.current.isFocused()}');
                 await Future.delayed(const Duration(seconds: 2));
                 await MultiWindowManager.current.focus();
                 await Future.delayed(const Duration(seconds: 2));
-                print('isFocused: ${await MultiWindowManager.current.isFocused()}');
+                print(
+                    'isFocused: ${await MultiWindowManager.current.isFocused()}');
               },
             ),
             PreferenceListItem(
@@ -279,7 +317,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListItem(
               title: const Text('isMaximized'),
               onTap: () async {
-                bool isMaximized = await MultiWindowManager.current.isMaximized();
+                bool isMaximized =
+                    await MultiWindowManager.current.isMaximized();
                 BotToast.showText(
                   text: 'isMaximized: $isMaximized',
                 );
@@ -296,7 +335,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListItem(
               title: const Text('isMinimized'),
               onTap: () async {
-                bool isMinimized = await MultiWindowManager.current.isMinimized();
+                bool isMinimized =
+                    await MultiWindowManager.current.isMinimized();
                 BotToast.showText(
                   text: 'isMinimized: $isMinimized',
                 );
@@ -320,7 +360,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListItem(
               title: const Text('dock / undock'),
               onTap: () async {
-                DockSide? isDocked = await MultiWindowManager.current.isDocked();
+                DockSide? isDocked =
+                    await MultiWindowManager.current.isDocked();
                 BotToast.showText(text: 'isDocked: $isDocked');
               },
               accessoryView: Row(
@@ -328,13 +369,15 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                   CupertinoButton(
                     child: const Text('dock left'),
                     onPressed: () async {
-                      MultiWindowManager.current.dock(side: DockSide.left, width: 500);
+                      MultiWindowManager.current
+                          .dock(side: DockSide.left, width: 500);
                     },
                   ),
                   CupertinoButton(
                     child: const Text('dock right'),
                     onPressed: () async {
-                      MultiWindowManager.current.dock(side: DockSide.right, width: 500);
+                      MultiWindowManager.current
+                          .dock(side: DockSide.right, width: 500);
                     },
                   ),
                   CupertinoButton(
@@ -349,7 +392,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isFullScreen / setFullScreen'),
               onTap: () async {
-                bool isFullScreen = await MultiWindowManager.current.isFullScreen();
+                bool isFullScreen =
+                    await MultiWindowManager.current.isFullScreen();
                 BotToast.showText(text: 'isFullScreen: $isFullScreen');
               },
               value: _isFullScreen,
@@ -397,7 +441,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                   CupertinoButton(
                     child: const Text('transparent'),
                     onPressed: () async {
-                      MultiWindowManager.current.setBackgroundColor(Colors.transparent);
+                      MultiWindowManager.current
+                          .setBackgroundColor(Colors.transparent);
                     },
                   ),
                   CupertinoButton(
@@ -409,13 +454,15 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                   CupertinoButton(
                     child: const Text('green'),
                     onPressed: () async {
-                      MultiWindowManager.current.setBackgroundColor(Colors.green);
+                      MultiWindowManager.current
+                          .setBackgroundColor(Colors.green);
                     },
                   ),
                   CupertinoButton(
                     child: const Text('blue'),
                     onPressed: () async {
-                      MultiWindowManager.current.setBackgroundColor(Colors.blue);
+                      MultiWindowManager.current
+                          .setBackgroundColor(Colors.blue);
                     },
                   ),
                 ],
@@ -446,7 +493,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 },
                 isSelected: _kSizes.map((e) => e == _size).toList(),
                 children: <Widget>[
-                  for (var size in _kSizes) Text(' ${size.width.toInt()}x${size.height.toInt()} '),
+                  for (var size in _kSizes)
+                    Text(' ${size.width.toInt()}x${size.height.toInt()} '),
                 ],
               ),
               onTap: () async {
@@ -563,7 +611,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                   CupertinoButton(
                     child: const Text('xy>zero'),
                     onPressed: () async {
-                      MultiWindowManager.current.setPosition(const Offset(0, 0));
+                      MultiWindowManager.current
+                          .setPosition(const Offset(0, 0));
                       setState(() {});
                     },
                   ),
@@ -571,7 +620,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     child: const Text('x+20'),
                     onPressed: () async {
                       Offset p = await MultiWindowManager.current.getPosition();
-                      MultiWindowManager.current.setPosition(Offset(p.dx + 20, p.dy));
+                      MultiWindowManager.current
+                          .setPosition(Offset(p.dx + 20, p.dy));
                       setState(() {});
                     },
                   ),
@@ -579,7 +629,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     child: const Text('x-20'),
                     onPressed: () async {
                       Offset p = await MultiWindowManager.current.getPosition();
-                      MultiWindowManager.current.setPosition(Offset(p.dx - 20, p.dy));
+                      MultiWindowManager.current
+                          .setPosition(Offset(p.dx - 20, p.dy));
                       setState(() {});
                     },
                   ),
@@ -587,7 +638,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     child: const Text('y+20'),
                     onPressed: () async {
                       Offset p = await MultiWindowManager.current.getPosition();
-                      MultiWindowManager.current.setPosition(Offset(p.dx, p.dy + 20));
+                      MultiWindowManager.current
+                          .setPosition(Offset(p.dx, p.dy + 20));
                       setState(() {});
                     },
                   ),
@@ -595,14 +647,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     child: const Text('y-20'),
                     onPressed: () async {
                       Offset p = await MultiWindowManager.current.getPosition();
-                      MultiWindowManager.current.setPosition(Offset(p.dx, p.dy - 20));
+                      MultiWindowManager.current
+                          .setPosition(Offset(p.dx, p.dy - 20));
                       setState(() {});
                     },
                   ),
                 ],
               ),
               onTap: () async {
-                Offset position = await MultiWindowManager.current.getPosition();
+                Offset position =
+                    await MultiWindowManager.current.getPosition();
                 BotToast.showText(
                   text: position.toString(),
                 );
@@ -637,7 +691,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 },
                 isSelected: _kMinSizes.map((e) => e == _minSize).toList(),
                 children: <Widget>[
-                  for (var size in _kMinSizes) Text(' ${size.width.toInt()}x${size.height.toInt()} '),
+                  for (var size in _kMinSizes)
+                    Text(' ${size.width.toInt()}x${size.height.toInt()} '),
                 ],
               ),
             ),
@@ -651,14 +706,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 },
                 isSelected: _kMaxSizes.map((e) => e == _maxSize).toList(),
                 children: <Widget>[
-                  for (var size in _kMaxSizes) Text(' ${size.width.toInt()}x${size.height.toInt()} '),
+                  for (var size in _kMaxSizes)
+                    Text(' ${size.width.toInt()}x${size.height.toInt()} '),
                 ],
               ),
             ),
             PreferenceListSwitchItem(
               title: const Text('isResizable / setResizable'),
               onTap: () async {
-                bool isResizable = await MultiWindowManager.current.isResizable();
+                bool isResizable =
+                    await MultiWindowManager.current.isResizable();
                 BotToast.showText(text: 'isResizable: $isResizable');
               },
               value: _isResizable,
@@ -684,14 +741,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isMinimizable / setMinimizable'),
               onTap: () async {
-                _isMinimizable = await MultiWindowManager.current.isMinimizable();
+                _isMinimizable =
+                    await MultiWindowManager.current.isMinimizable();
                 setState(() {});
                 BotToast.showText(text: 'isMinimizable: $_isMinimizable');
               },
               value: _isMinimizable,
               onChanged: (newValue) async {
                 await MultiWindowManager.current.setMinimizable(newValue);
-                _isMinimizable = await MultiWindowManager.current.isMinimizable();
+                _isMinimizable =
+                    await MultiWindowManager.current.isMinimizable();
                 print('isMinimizable: $_isMinimizable');
                 setState(() {});
               },
@@ -699,14 +758,16 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isMaximizable / setMaximizable'),
               onTap: () async {
-                _isMaximizable = await MultiWindowManager.current.isMaximizable();
+                _isMaximizable =
+                    await MultiWindowManager.current.isMaximizable();
                 setState(() {});
                 BotToast.showText(text: 'isClosable: $_isMaximizable');
               },
               value: _isMaximizable,
               onChanged: (newValue) async {
                 await MultiWindowManager.current.setMaximizable(newValue);
-                _isMaximizable = await MultiWindowManager.current.isMaximizable();
+                _isMaximizable =
+                    await MultiWindowManager.current.isMaximizable();
                 print('isMaximizable: $_isMaximizable');
                 setState(() {});
               },
@@ -729,7 +790,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isAlwaysOnTop / setAlwaysOnTop'),
               onTap: () async {
-                bool isAlwaysOnTop = await MultiWindowManager.current.isAlwaysOnTop();
+                bool isAlwaysOnTop =
+                    await MultiWindowManager.current.isAlwaysOnTop();
                 BotToast.showText(text: 'isAlwaysOnTop: $isAlwaysOnTop');
               },
               value: _isAlwaysOnTop,
@@ -742,13 +804,15 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListSwitchItem(
               title: const Text('isAlwaysOnBottom / setAlwaysOnBottom'),
               onTap: () async {
-                bool isAlwaysOnBottom = await MultiWindowManager.current.isAlwaysOnBottom();
+                bool isAlwaysOnBottom =
+                    await MultiWindowManager.current.isAlwaysOnBottom();
                 BotToast.showText(text: 'isAlwaysOnBottom: $isAlwaysOnBottom');
               },
               value: _isAlwaysOnBottom,
               onChanged: (newValue) async {
                 _isAlwaysOnBottom = newValue;
-                await MultiWindowManager.current.setAlwaysOnBottom(_isAlwaysOnBottom);
+                await MultiWindowManager.current
+                    .setAlwaysOnBottom(_isAlwaysOnBottom);
                 setState(() {});
               },
             ),
@@ -759,7 +823,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 BotToast.showText(
                   text: title.toString(),
                 );
-                title = 'Window ID ${MultiWindowManager.current.id} - ${DateTime.now().millisecondsSinceEpoch}';
+                title =
+                    'Window ID ${MultiWindowManager.current.id} - ${DateTime.now().millisecondsSinceEpoch}';
                 await MultiWindowManager.current.setTitle(title);
               },
             ),
@@ -794,7 +859,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListItem(
               title: const Text('getTitleBarHeight'),
               onTap: () async {
-                int titleBarHeight = await MultiWindowManager.current.getTitleBarHeight();
+                int titleBarHeight =
+                    await MultiWindowManager.current.getTitleBarHeight();
                 BotToast.showText(
                   text: 'titleBarHeight: $titleBarHeight',
                 );
@@ -803,7 +869,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
             PreferenceListItem(
               title: const Text('isSkipTaskbar'),
               onTap: () async {
-                bool isSkipping = await MultiWindowManager.current.isSkipTaskbar();
+                bool isSkipping =
+                    await MultiWindowManager.current.isSkipTaskbar();
                 BotToast.showText(
                   text: 'isSkipTaskbar: $isSkipping',
                 );
@@ -856,7 +923,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                 'isVisibleOnAllWorkspaces / setVisibleOnAllWorkspaces',
               ),
               onTap: () async {
-                bool isVisibleOnAllWorkspaces = await MultiWindowManager.current.isVisibleOnAllWorkspaces();
+                bool isVisibleOnAllWorkspaces =
+                    await MultiWindowManager.current.isVisibleOnAllWorkspaces();
                 BotToast.showText(
                   text: 'isVisibleOnAllWorkspaces: $isVisibleOnAllWorkspaces',
                 );
@@ -1013,7 +1081,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     MultiWindowManager.current.startDragging();
                   },
                   onDoubleTap: () async {
-                    bool isMaximized = await MultiWindowManager.current.isMaximized();
+                    bool isMaximized =
+                        await MultiWindowManager.current.isMaximized();
                     if (!isMaximized) {
                       MultiWindowManager.current.maximize();
                     } else {
@@ -1100,7 +1169,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
         break;
       case 'set_ignore_mouse_events':
         _isIgnoreMouseEvents = false;
-        await MultiWindowManager.current.setIgnoreMouseEvents(_isIgnoreMouseEvents);
+        await MultiWindowManager.current
+            .setIgnoreMouseEvents(_isIgnoreMouseEvents);
         setState(() {});
         break;
     }
@@ -1155,9 +1225,11 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
   }
 
   @override
-  Future<dynamic> onEventFromWindow(String eventName, int fromWindowId, dynamic arguments) async {
+  Future<dynamic> onEventFromWindow(
+      String eventName, int fromWindowId, dynamic arguments) async {
     BotToast.showText(
-        text: '[${MultiWindowManager.current}] Event $eventName from Window $fromWindowId with arguments $arguments');
+        text:
+            '[${MultiWindowManager.current}] Event $eventName from Window $fromWindowId with arguments $arguments');
     return 'Hello from ${MultiWindowManager.current}';
   }
 }

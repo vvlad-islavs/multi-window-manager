@@ -17,11 +17,13 @@ void main(List<String> args) async {
   final windowId = args.isEmpty ? 0 : int.tryParse(args[0]) ?? 0;
   final Map<String, dynamic> argsMap =
       args.isEmpty ? {} : {'arg1': args[1], 'arg2': args[2]};
+  final isReusable =
+      args.length > 3 ? jsonDecode(args[3])['isReusable'] : false;
   windowId == 0
       ? await MultiWindowManager.ensureInitialized(windowId)
       : await MultiWindowManager.ensureInitializedSecondary(
           windowId,
-          isEnabledReuse: true,
+          isEnabledReuse: isReusable,
         );
 
   WindowOptions windowOptions = WindowOptions(
