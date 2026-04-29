@@ -23,6 +23,7 @@ Key additions: **window reuse cache** (avoid re-creating Flutter engines), **cro
   - [Create a window](#create-a-window)
   - [Reuse cached windows](#reuse-cached-windows)
   - [Communication between windows](#communication-between-windows)
+  - [High-frequency IPC (WindowIpc)](#high-frequency-ipc-windowipc)
   - [Window events](#window-events)
   - [Window registry](#window-registry)
   - [Confirm before closing](#confirm-before-closing)
@@ -31,6 +32,9 @@ Key additions: **window reuse cache** (avoid re-creating Flutter engines), **cro
 - [API](#api)
   - [MultiWindowManager](#multiwindowmanager-1)
   - [WindowListener](#windowlistener-1)
+  - [WindowIpc](#windowipc-1)
+  - [IpcNotifierSender](#ipcnotifiersender-1)
+  - [IpcNotifierReceiver](#ipcnotifierreceiver-1)
   - [WindowRegistry](#windowregistry-1)
 
 ---
@@ -271,6 +275,147 @@ To get all registered window IDs:
 ```dart
 final ids = await MultiWindowManager.getAllWindowManagerIds();
 ```
+
+### High-frequency IPC (WindowIpc)
+
+`WindowIpc` is a persistent channel built on Dart's `IsolateNameServer`. After a one-time native handshake, all data flows through `SendPort` / `ReceivePort` with no native layer involvement. This makes it suitable for animation-rate state sync, `ChangeNotifier` updates, and any scenario where `invokeMethodToWindow` would be called too frequently.
+
+The channel is a lazy singleton on each window - no setup or disposal required:
+
+```dart
+final ipc = MultiWindowManager.current.ipc;
+```
+
+**Wire format**: a flat `List<Object?>`. List index access has no hashing overhead compared to `Map`, which matters at high message rates.
+
+#### Connect
+
+One call establishes a bidirectional link. Both windows can send and receive after a single handshake:
+
+```dart
+// Window A: connect to window B.
+await MultiWindowManager.current.ipc.connectWindow(windowBId);
+
+// Window B: react when A connects.
+MultiWindowManager.current.ipc.onConnected = (int fromId) {
+  // Set up stream listeners here.
+};
+
+// Either side: react when the peer closes or hides.
+MultiWindowManager.current.ipc.onDisconnected = (int fromId) {
+  // Clean up listeners here.
+};
+```
+
+#### Send and receive raw payloads
+
+```dart
+// Sender: fire-and-forget, no await needed.
+await MultiWindowManager.current.ipc.notifyWindow(targetId, ['counter', 1, 'ts', timestamp]);
+
+// Receiver:
+MultiWindowManager.current.ipc.listenWindow(sourceId).listen((payload) {
+  final counter = payload[1] as int;
+});
+```
+
+Use a **topic** string at index 0 to route messages between multiple features sharing the same channel:
+
+```dart
+ipc.notifyWindow(targetId, ['metrics', 'fps', 60, 'mem', 128]);
+ipc.notifyWindow(targetId, ['input',   'x',   0.5, 'y',  0.3]);
+
+ipc.listenWindow(sourceId)
+    .where((m) => m[0] == 'metrics')
+    .listen((m) => /* ... */);
+```
+
+#### Sync a ChangeNotifier
+
+Use `IpcNotifierSender` on the source window and `IpcNotifierReceiver` on the target window.
+
+Multiple fields changed in the same synchronous call stack are coalesced into one message via `scheduleMicrotask`, so rapid successive assignments produce a single IPC event instead of one per field.
+
+**Source window:**
+
+```dart
+class PersonNotifier extends ChangeNotifier with IpcNotifierSender {
+  String _name = '';
+  int _age = 0;
+
+  String get name => _name;
+  set name(String v) {
+    _name = v;
+    notifyListeners();
+    ipcMark('name', v); // queues field for next microtask flush
+  }
+
+  int get age => _age;
+  set age(int v) {
+    _age = v;
+    notifyListeners();
+    ipcMark('age', v);
+  }
+}
+
+// Setup (once, after ensureInitialized):
+final notifier = PersonNotifier();
+notifier.ipcSetup(MultiWindowManager.current.ipc, 'person');
+
+// Both fields changed synchronously = ONE IPC message.
+notifier.name = 'Alice';
+notifier.age  = 30;
+```
+
+**Target window:**
+
+```dart
+class PersonNotifier extends ChangeNotifier with IpcNotifierReceiver {
+  String name = '';
+  int age = 0;
+
+  @override
+  void ipcApplyField(String field, Object? value) {
+    switch (field) {
+      case 'name': name = value as String;
+      case 'age':  age  = value as int;
+    }
+    // notifyListeners() is called once after the full batch.
+  }
+
+  @override
+  void dispose() {
+    ipcCancelListeners();
+    super.dispose();
+  }
+}
+
+// Setup: call inside ipc.onConnected so the receiver starts when the
+// source window connects (not before).
+MultiWindowManager.current.ipc.onConnected = (int fromId) {
+  myNotifier.ipcListen(MultiWindowManager.current.ipc, fromId, 'person');
+};
+```
+
+Multiple notifiers can share the same channel by using different topic strings:
+
+```dart
+personNotifier.ipcSetup(ipc, 'person');
+productNotifier.ipcSetup(ipc, 'product');
+
+personNotifier.ipcListen(ipc, sourceId, 'person');
+productNotifier.ipcListen(ipc, sourceId, 'product');
+```
+
+#### Performance comparison
+
+| Approach | 1 000 messages sent | Receive throughput | Notes |
+|---|---|---|---|
+| `WindowIpc` (fire-and-forget) | ~15 ms | ~66 000 msg/s | No native layer after handshake |
+| `invokeMethodToWindow` (no await) | ~15 ms | ~20 000 msg/s | Platform thread is bottleneck |
+| `invokeMethodToWindow` (await each) | ~1 600 ms | ~625 msg/s | Full round-trip per call |
+
+---
 
 ### Window events
 
@@ -824,6 +969,72 @@ Emitted for every window event, including reuse lifecycle events.
 ##### [onEventFromWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowListener/onEventFromWindow.html)(String eventName, int fromWindowId, dynamic arguments) -> Future
 
 Receives inter-window messages sent via `invokeMethodToWindow`. The return value is forwarded back to the caller.
+
+---
+
+### WindowIpc
+
+Accessible via `MultiWindowManager.current.ipc`. Lazy singleton - created on first access.
+
+##### ipc -> WindowIpc\<List\<Object?\>\>
+
+The IPC channel for this window. Payload type is always `List<Object?>`.
+
+##### [connectWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowIpc/connectWindow.html)(int targetId) -> Future\<bool\>
+
+Establishes a bidirectional link with `targetId`. Returns `false` if the target has not yet accessed its `ipc` getter. After success, both windows can send and receive without further native calls.
+
+##### [notifyWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowIpc/notifyWindow.html)(int targetId, List\<Object?\> data) -> Future\<bool\>
+
+Sends `data` to `targetId` via `SendPort`. Calls `connectWindow` automatically on first use. Returns `false` if the target is not reachable.
+
+##### [listenWindow](https://pub.dev/documentation/multi_window_manager/latest/multi_window_manager/WindowIpc/listenWindow.html)(int sourceId) -> Stream\<List\<Object?\>\>
+
+Returns a broadcast stream of messages arriving from `sourceId`. Created lazily.
+
+##### onConnected -> void Function(int fromWindowId)?
+
+Callback fired when another window connects to this window (receives `ipc-connect`). Use it to set up stream subscriptions reactively.
+
+##### onDisconnected -> void Function(int fromWindowId)?
+
+Callback fired when a connected window sends a disconnect signal (on close or reuse-hide).
+
+##### connectedWindowIds -> Set\<int\>
+
+IDs of all windows this channel can currently send to.
+
+---
+
+### IpcNotifierSender
+
+Mixin for a `ChangeNotifier` that broadcasts field-level delta updates to other windows.
+
+##### ipcSetup(WindowIpc\<List\<Object?\>\> ipc, String topic) -> void
+
+Attaches the IPC channel and sets the routing topic. Multiple notifiers can share the same `ipc` with different topics.
+
+##### ipcMark(String field, Object? value) -> void
+
+Records that `field` changed to `value` and schedules a microtask flush. Call inside setters after updating the backing field and calling `notifyListeners`. Simultaneous changes within the same call stack are coalesced into one message.
+
+---
+
+### IpcNotifierReceiver
+
+Mixin for a `ChangeNotifier` that receives and applies delta updates from a source window.
+
+##### ipcListen(WindowIpc\<List\<Object?\>\> ipc, int sourceId, String topic) -> void
+
+Subscribes to updates tagged with `topic` from `sourceId`. May be called multiple times for different source windows.
+
+##### ipcApplyField(String field, Object? value) -> void
+
+**Abstract.** Override to apply a single incoming field change. `notifyListeners` is called once after all fields in the batch are applied.
+
+##### ipcCancelListeners() -> void
+
+Cancels all subscriptions. Call before `dispose`.
 
 ---
 

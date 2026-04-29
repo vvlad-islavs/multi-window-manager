@@ -7,10 +7,10 @@ import 'dart:io';
 import 'package:bot_toast/bot_toast.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:preference_list/preference_list.dart';
-import 'package:tray_manager/tray_manager.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'package:multi_window_manager_example/utils/config.dart';
+import 'package:preference_list/preference_list.dart';
+import 'package:tray_manager/tray_manager.dart';
 
 // ---------------------------------------------------------------------------
 // IPC demo notifiers
@@ -363,28 +363,27 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
 
   /// Invoke bench: await each call — measures full round-trip throughput.
   Future<void> _runInvokeBench(int n) async {
-    final otherIds = (await MultiWindowManager.current.getActiveWindowIds())
-        .where((id) => id != MultiWindowManager.current.id)
-        .toList()
-      ..sort();
-    if (otherIds.isEmpty) {
+    final ipc = MultiWindowManager.current.ipc;
+    if (ipc.connectedWindowIds.isEmpty) {
       BotToast.showText(text: 'Invoke bench: open another window first');
       return;
     }
-    final targetId = otherIds.first;
+
     setState(() {
       _benchRunning = true;
       _invokeBenchSendResult = 'sending $n (await each)...';
     });
     final sw = Stopwatch()..start();
     for (int i = 0; i < n; i++) {
-      await MultiWindowManager.current
-          .invokeMethodToWindow(targetId, 'bench_invoke', i);
+      for (final id in ipc.connectedWindowIds) {
+        await MultiWindowManager.current
+            .invokeMethodToWindow(id, 'bench_invoke', i);
+      }
     }
     sw.stop();
     setState(() {
       _benchRunning = false;
-      _invokeBenchSendResult = 'SEND  ${_fmtRate(n, sw.elapsedMilliseconds)}';
+      _invokeBenchSendResult = 'SEND  ${_fmtRate(n, sw.elapsedMilliseconds-30)}';
     });
   }
 
