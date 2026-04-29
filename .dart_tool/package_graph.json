@@ -8,6 +8,7 @@
       "version": "1.0.5",
       "dependencies": [
         "flutter",
+        "meta",
         "path",
         "screen_retriever"
       ],
@@ -78,6 +79,11 @@
       "dependencies": []
     },
     {
+      "name": "meta",
+      "version": "1.17.0",
+      "dependencies": []
+    },
+    {
       "name": "flutter",
       "version": "0.0.0",
       "dependencies": [
@@ -100,11 +106,6 @@
       "dependencies": [
         "async"
       ]
-    },
-    {
-      "name": "meta",
-      "version": "1.17.0",
-      "dependencies": []
     },
     {
       "name": "collection",

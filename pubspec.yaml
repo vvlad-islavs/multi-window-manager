@@ -22,6 +22,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  meta: ^1.17.0
   path: ^1.8.0
   screen_retriever: ^0.2.0
 
