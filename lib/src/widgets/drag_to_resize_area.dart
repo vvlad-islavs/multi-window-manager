@@ -20,7 +20,7 @@ import 'package:multi_window_manager/src/window_manager.dart';
 ///     color: Colors.grey,
 ///   ),
 ///   resizeEdgeSize: 6,
-///   resizeEdgeColor: Colors.red.withOpacity(0.2),
+///   resizeEdgeColor: Colors.red.withValues(alpha:0.2),
 /// )
 /// ```
 /// {@end-tool}

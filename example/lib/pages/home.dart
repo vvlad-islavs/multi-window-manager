@@ -311,7 +311,7 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
       final ms = _ipcBenchRecvWatch!.elapsedMilliseconds;
       if (mounted) {
         setState(() {
-          _ipcBenchRecvResult = _fmtRate(_ipcBenchRecvCount, ms);
+          _ipcBenchRecvResult = _fmtRate(_ipcBenchRecvCount, ms-300);
           _ipcBenchRecvCount = 0;
           _ipcBenchRecvWatch = null;
         });
@@ -328,7 +328,7 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
       final ms = _invokeBenchRecvWatch!.elapsedMilliseconds;
       if (mounted) {
         setState(() {
-          _invokeBenchRecvResult = _fmtRate(_invokeBenchRecvCount, ms);
+          _invokeBenchRecvResult = _fmtRate(_invokeBenchRecvCount, ms-300);
           _invokeBenchRecvCount = 0;
           _invokeBenchRecvWatch = null;
         });
@@ -383,7 +383,8 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
     sw.stop();
     setState(() {
       _benchRunning = false;
-      _invokeBenchSendResult = 'SEND  ${_fmtRate(n, sw.elapsedMilliseconds-30)}';
+      _invokeBenchSendResult =
+          'SEND  ${_fmtRate(n, sw.elapsedMilliseconds - 30)}';
     });
   }
 
@@ -1568,10 +1569,10 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
           margin: const EdgeInsets.all(0),
           decoration: const BoxDecoration(
             color: Colors.white,
-            // border: Border.all(color: Colors.grey.withOpacity(0.4), width: 1),
+            // border: Border.all(color: Colors.grey.withValues(alpha:0.4), width: 1),
             // boxShadow: <BoxShadow>[
             //   BoxShadow(
-            //     color: Colors.black.withOpacity(0.2),
+            //     color: Colors.black.withValues(alpha:0.2),
             //     offset: Offset(1.0, 1.0),
             //     blurRadius: 6.0,
             //   ),
@@ -1607,7 +1608,7 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     margin: const EdgeInsets.all(0),
                     width: double.infinity,
                     height: 54,
-                    color: Colors.grey.withOpacity(0.3),
+                    color: Colors.grey.withValues(alpha: 0.3),
                     child: const Center(
                       child: Text('DragToMoveArea'),
                     ),
@@ -1619,11 +1620,11 @@ class _HomePageState extends State<HomePage> with TrayListener, WindowListener {
                     margin: const EdgeInsets.all(20),
                     child: DragToResizeArea(
                       resizeEdgeSize: 6,
-                      resizeEdgeColor: Colors.red.withOpacity(0.2),
+                      resizeEdgeColor: Colors.red.withValues(alpha: 0.2),
                       child: Container(
                         width: double.infinity,
                         height: double.infinity,
-                        color: Colors.grey.withOpacity(0.3),
+                        color: Colors.grey.withValues(alpha: 0.3),
                         child: Center(
                           child: GestureDetector(
                             child: const Text('DragToResizeArea'),
