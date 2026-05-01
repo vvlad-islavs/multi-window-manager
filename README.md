@@ -8,7 +8,7 @@
 Flutter desktop plugin for creating and managing multiple windows: resizing, repositioning, and inter-window communication.
 
 Fork and re-work of [window_manager_plus](https://pub.dev/packages/window_manager_plus), which itself is based on [window_manager](https://pub.dev/packages/window_manager).
-Key additions: **window reuse cache** (avoid re-creating Flutter engines), **cross-window registry** backed by shared native state, **fixed critical errors** fixed restart and crash after close secondary window, **fast isolate-isolate channel** fast channel for realtime windows notify (in process).
+Key additions: **window reuse cache** (avoid re-creating Flutter engines), **cross-window registry** backed by shared native state, **fixed critical errors** fixed restart and crash after close secondary window, **fast isolate-isolate channel** fast channel for realtime windows notify - ipc.
 
 **Linux is not currently supported.**
 

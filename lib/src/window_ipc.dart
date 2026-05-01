@@ -37,7 +37,6 @@ const _kPortPrefix = 'mwm_ipc_';
 ///   remote window connects here first.
 /// - [_incoming]: ports of windows that have connected TO this window.
 ///   Used by [IpcNotifierSender] to know who to broadcast to.
-@internal
 class WindowIpc<T> with WindowListener {
   /// Creates an IPC channel for [wm].
   ///

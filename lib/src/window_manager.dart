@@ -771,10 +771,10 @@ class MultiWindowManager {
   /// Sets the background color of the window.
   Future<void> setBackgroundColor(Color backgroundColor) async {
     final Map<String, dynamic> arguments = {
-      'backgroundColorA': backgroundColor.alpha,
-      'backgroundColorR': backgroundColor.red,
-      'backgroundColorG': backgroundColor.green,
-      'backgroundColorB': backgroundColor.blue,
+      'backgroundColorA': backgroundColor.intAlpha,
+      'backgroundColorR': backgroundColor.intRed,
+      'backgroundColorG': backgroundColor.intGreen,
+      'backgroundColorB': backgroundColor.intBlue,
     };
     await _invokeMethod('setBackgroundColor', arguments);
   }
@@ -1228,8 +1228,11 @@ class MultiWindowManager {
   /// Invokes a method on the window with id [targetWindowId].
   /// It could return a Future that resolves to the return value of the invoked method, otherwise `null`.
   /// Use [WindowListener.onEventFromWindow] to listen for the event.
-  Future<dynamic> invokeMethodToWindow(int targetWindowId, String method,
-      [dynamic args]) async {
+  Future<dynamic> invokeMethodToWindow(
+    int targetWindowId,
+    String method, [
+    dynamic args,
+  ]) async {
     final Map<String, dynamic> arguments = {
       'targetWindowId': targetWindowId,
       'args': {
@@ -1246,4 +1249,14 @@ class MultiWindowManager {
   String toString() {
     return 'MultiWindowManager{id: $_id}';
   }
+}
+
+extension ColorX on Color {
+  int get intRed => (r * 255.0).round().clamp(0, 255);
+
+  int get intGreen => (g * 255.0).round().clamp(0, 255);
+
+  int get intBlue => (b * 255.0).round().clamp(0, 255);
+
+  int get intAlpha => (a * 255.0).round().clamp(0, 255);
 }

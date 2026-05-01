@@ -1,3 +1,7 @@
+## 1.1.0
+
+- Added inter window connect. Removed deprecated methods
+
 ## 1.0.6
 
 - Updated example. Added reusable window create example

@@ -121,8 +121,10 @@ class ReusableWindowState extends State<ReusableWindow>
       _forceWindowsRepaint();
     }
 
-    log('ReusableWindow ${MultiWindowManager.current.id} shown',
-        name: 'ReusableWindow');
+    log(
+      'ReusableWindow ${MultiWindowManager.current.id} shown',
+      name: 'ReusableWindow',
+    );
   }
 
   /// Schedules a 1-pixel resize round-trip on Windows to force the Flutter
@@ -142,8 +144,10 @@ class ReusableWindowState extends State<ReusableWindow>
   @override
   Future<void> onReuseClose() async {
     if (mounted) setState(() => _isInitialized = false);
-    log('ReusableWindow ${MultiWindowManager.current.id} hidden for reuse',
-        name: 'ReusableWindow');
+    log(
+      'ReusableWindow ${MultiWindowManager.current.id} hidden for reuse',
+      name: 'ReusableWindow',
+    );
   }
 
   @override
