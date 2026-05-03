@@ -629,12 +629,11 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
             return false
         }
         // Reuse mode: hide instead of destroy, mirror WM_CLOSE + is_reuse_enabled_ from Windows.
+        // orderOut must be called synchronously BEFORE emitEvent so that isVisible() already
+        // returns false by the time Dart receives the event and queries getActiveWindowIds().
         if isReuseEnabled {
-            // emitEvent sends locally (no windowId) and globally (with windowId) in one call.
+            sender.orderOut(nil)
             emitEvent("reuse-close")
-            DispatchQueue.main.async {
-                sender.orderOut(nil)
-            }
             return false
         }
         emitEvent("close")
