@@ -1,3 +1,7 @@
+## 1.1.1
+
+- Fixed macos GetActiveWindows method
+
 ## 1.1.0
 
 - Added inter window connect. Removed deprecated methods
