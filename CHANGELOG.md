@@ -1,3 +1,7 @@
+## 1.1.2
+
+- Fixed hotRestart when enabled reuseMode
+
 ## 1.1.1
 
 - Fixed macos GetActiveWindows method

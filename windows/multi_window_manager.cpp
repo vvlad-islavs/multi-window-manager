@@ -167,6 +167,9 @@ namespace multi_window_manager {
     }
 
     void MultiWindowManager::Focus() {
+        // Mirror macOS: a reuse-pool window must not be brought to front by hot
+        // restart or any other unsolicited focus() call.
+        if (is_reuse_enabled_ && is_in_reuse_pool_) return;
         HWND hWnd = GetMainWindow();
         if (IsMinimized()) {
             Restore();
@@ -193,6 +196,13 @@ namespace multi_window_manager {
     }
 
     void MultiWindowManager::Show() {
+        // Mirror macOS show(): a reuse-pool window may only become visible through
+        // the legitimate claimWindow -> show-window path (is_being_reused_ == true).
+        // Any other Show() call (e.g. from the hot-restart init sequence) is ignored.
+        if (is_reuse_enabled_ && is_in_reuse_pool_) {
+            if (!is_being_reused_) return;
+            is_in_reuse_pool_ = false;
+        }
         // Release the reuse claim so getActiveWindowIds() counts this window as
         // active before IsVisible() catches up after SW_SHOW completes.
         is_being_reused_ = false;

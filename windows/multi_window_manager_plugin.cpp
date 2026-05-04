@@ -409,11 +409,7 @@ namespace multi_window_manager {
             if (window_manager->is_reuse_enabled_) {
                 // Reuse mode (preventClose is off): hide instead of destroy.
                 //
-                // Fire "reuse-close" locally (for SecondaryWindowHost) and globally
-                // (so the main window registry calls markHidden).
-                // onWindowClose() is dispatched in Dart via the funcMap entry
-                // kWindowEventReuseClose -> listener.onWindowClose - no extra native
-                // event needed.
+                window_manager->is_in_reuse_pool_ = true;
                 _EmitEvent("reuse-close");
                 _EmitGlobalEvent("reuse-close");
                 window_manager->Hide();

@@ -67,6 +67,12 @@ namespace multi_window_manager {
         // Prevents two concurrent createWindowOrReuse() callers from claiming
         // the same hidden window before it becomes visible again.
         bool is_being_reused_ = false;
+        // Set to true when the window enters the hidden reuse pool (via WM_CLOSE).
+        // Prevents hot-restart from re-showing the window via the standard
+        // init -> show() / focus() path.
+        // Reset to false when the window is legitimately reclaimed via
+        // claimWindow() + Show().
+        bool is_in_reuse_pool_ = false;
         double aspect_ratio_ = 0;
         POINT minimum_size_ = {0, 0};
         POINT maximum_size_ = {-1, -1};

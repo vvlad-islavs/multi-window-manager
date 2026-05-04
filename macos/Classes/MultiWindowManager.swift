@@ -122,6 +122,10 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     private var _isAlwaysOnBottom: Bool = false
     public var isReuseEnabled: Bool = false
     public var isBeingReused: Bool = false
+    /// Set to `true` when the window enters the hidden reuse pool (via windowShouldClose).
+    /// Prevents hot-restart from re-showing the window via the standard init -> show() path.
+    /// Reset to `false` when the window is legitimately reclaimed via claimWindow + show().
+    private var isInReusePool: Bool = false
 
     override public init() {
         super.init()
@@ -171,6 +175,7 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func focus() {
+        if isReuseEnabled && isInReusePool { return }
         NSApp.activate(ignoringOtherApps: false)
         mainWindow.makeKeyAndOrderFront(nil)
     }
@@ -184,8 +189,15 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func show(_ args: [String: Any] = [:]) {
+        // A reuse-enabled window that is in the hidden pool must only become visible
+        // through the legitimate claimWindow -> show-window path (isBeingReused == true).
+        // Any other show() call (e.g. from the hot-restart init sequence) is ignored.
+        if isReuseEnabled && isInReusePool {
+            if !isBeingReused { return }
+            isInReusePool = false
+        }
         let inactive = args["inactive"] as? Bool ?? false
-        // Release the claim set by claimWindow() before the window becomes visible.
+        // Release the claim set by claimWindow().
         isBeingReused = false
         mainWindow.setIsVisible(true)
         DispatchQueue.main.async {
@@ -633,6 +645,7 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
         // returns false by the time Dart receives the event and queries getActiveWindowIds().
         if isReuseEnabled {
             sender.orderOut(nil)
+            isInReusePool = true
             emitEvent("reuse-close")
             return false
         }
