@@ -406,12 +406,17 @@ namespace multi_window_manager {
                 return -1;
             }
 
+            if (!window_manager->IsConfirmClose()) {
+                _EmitEvent("confirm-close");
+                return -1;
+            }
+
             if (window_manager->is_reuse_enabled_) {
                 // Reuse mode (preventClose is off): hide instead of destroy.
                 //
                 window_manager->is_in_reuse_pool_ = true;
+                window_manager->is_confirm_close_ = false;
                 _EmitEvent("reuse-close");
-                _EmitGlobalEvent("reuse-close");
                 window_manager->Hide();
                 return -1;
             }
@@ -656,6 +661,9 @@ namespace multi_window_manager {
             result->Success(flutter::EncodableValue(true));
         } else if (method_name.compare("close") == 0) {
             wManager->Close();
+            result->Success(flutter::EncodableValue(true));
+        } else if (method_name.compare("confirmClose") == 0) {
+            wManager->SetConfirmClose(args);
             result->Success(flutter::EncodableValue(true));
         } else if (method_name.compare("isPreventClose") == 0) {
             auto value = wManager->IsPreventClose();

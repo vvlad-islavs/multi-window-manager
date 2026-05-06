@@ -58,6 +58,7 @@ namespace multi_window_manager {
         bool is_always_on_bottom_ = false;
         bool is_frameless_ = false;
         bool is_prevent_close_ = false;
+        bool is_confirm_close_ = false;
         // When true, WM_CLOSE triggers hide+notify instead of a real destroy.
         // Set via ensureInitialized(isEnabledReuse: true) from Dart.
         // Operates independently from is_prevent_close_ so nested widgets can
@@ -94,6 +95,8 @@ namespace multi_window_manager {
         void MultiWindowManager::WaitUntilReadyToShow();
         void MultiWindowManager::Destroy();
         void MultiWindowManager::Close();
+        void MultiWindowManager::SetConfirmClose(const flutter::EncodableMap& args);
+        bool MultiWindowManager::IsConfirmClose();
         bool MultiWindowManager::IsPreventClose();
         void MultiWindowManager::SetPreventClose(const flutter::EncodableMap& args);
         void MultiWindowManager::Focus();

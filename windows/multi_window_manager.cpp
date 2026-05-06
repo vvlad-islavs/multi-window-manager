@@ -157,6 +157,14 @@ namespace multi_window_manager {
         PostMessage(hWnd, WM_SYSCOMMAND, SC_CLOSE, 0);
     }
 
+    void MultiWindowManager::SetConfirmClose(const flutter::EncodableMap& args) {
+      is_confirm_close_ = std::get<bool>(args.at(flutter::EncodableValue("confirmClose")));
+    }
+
+    bool MultiWindowManager::IsConfirmClose() {
+      return is_confirm_close_;
+    }
+
     void MultiWindowManager::SetPreventClose(const flutter::EncodableMap& args) {
         is_prevent_close_ =
                 std::get<bool>(args.at(flutter::EncodableValue("isPreventClose")));
