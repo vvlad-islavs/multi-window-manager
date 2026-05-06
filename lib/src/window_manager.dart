@@ -604,6 +604,9 @@ class MultiWindowManager {
 
   /// Try to close the window.
   Future<void> close() async {
+    if (_ipc != null && !await isPreventClose()) {
+      await _ipc?.close('close');
+    }
     await _invokeMethod('close');
   }
 

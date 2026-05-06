@@ -633,7 +633,6 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     // NSWindowDelegate
-
     public func windowShouldClose(_ sender: NSWindow) -> Bool {
         // setPreventClose(true) always wins regardless of isReuseEnabled.
         if _isPreventClose {

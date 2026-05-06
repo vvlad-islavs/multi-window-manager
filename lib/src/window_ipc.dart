@@ -51,7 +51,8 @@ class WindowIpc<T> with WindowListener {
       _port.sendPort,
       '$_kPortPrefix${_wm.id}',
     );
-    debugPrint('[IPC:${_wm.id}] init  port=$_kPortPrefix${_wm.id}  registered=$registered');
+    debugPrint(
+        '[IPC:${_wm.id}] init  port=$_kPortPrefix${_wm.id}  registered=$registered');
     _subscription = _port.listen(_handleMessage);
     _wm.addListener(this);
   }
@@ -110,18 +111,21 @@ class WindowIpc<T> with WindowListener {
     }
     final from = message[0];
     if (from is! int) {
-      debugPrint('[IPC:${_wm.id}] _handleMessage: bad fromId type: ${message[0]}');
+      debugPrint(
+          '[IPC:${_wm.id}] _handleMessage: bad fromId type: ${message[0]}');
       return;
     }
 
     // Disconnect signal: payload == null
     if (message[1] == null) {
-      debugPrint('[IPC:${_wm.id}] _handleMessage: disconnect signal from $from');
+      debugPrint(
+          '[IPC:${_wm.id}] _handleMessage: disconnect signal from $from');
       _disconnectFrom(from);
       return;
     }
 
-    debugPrint('[IPC:${_wm.id}] _handleMessage: from=$from  payload=${message[1]}');
+    debugPrint(
+        '[IPC:${_wm.id}] _handleMessage: from=$from  payload=${message[1]}');
     _streams
         .putIfAbsent(from, () => StreamController<T>.broadcast())
         .add(message[1] as T);
@@ -183,21 +187,25 @@ class WindowIpc<T> with WindowListener {
     }
     final portName = '$_kPortPrefix$targetId';
     final sp = IsolateNameServer.lookupPortByName(portName);
-    debugPrint('[IPC:${_wm.id}] connectWindow($targetId): lookup "$portName" -> ${sp != null ? "found" : "NOT FOUND"}');
+    debugPrint(
+        '[IPC:${_wm.id}] connectWindow($targetId): lookup "$portName" -> ${sp != null ? "found" : "NOT FOUND"}');
     if (sp == null) return false;
 
     _outgoing[targetId] = sp;
-    debugPrint('[IPC:${_wm.id}] connectWindow($targetId): outgoing stored, sending ipc-connect via native');
+    debugPrint(
+        '[IPC:${_wm.id}] connectWindow($targetId): outgoing stored, sending ipc-connect via native');
     try {
       await _wm.invokeMethodToWindow(
         targetId,
         'ipc-connect',
         {'portName': '$_kPortPrefix${_wm.id}'},
       );
-      debugPrint('[IPC:${_wm.id}] connectWindow($targetId): ipc-connect ack received');
+      debugPrint(
+          '[IPC:${_wm.id}] connectWindow($targetId): ipc-connect ack received');
     } catch (e) {
       // Port is ready; native ack is best-effort.
-      debugPrint('[IPC:${_wm.id}] connectWindow($targetId): ipc-connect ack error (non-fatal): $e');
+      debugPrint(
+          '[IPC:${_wm.id}] connectWindow($targetId): ipc-connect ack error (non-fatal): $e');
     }
     return true;
   }
@@ -213,16 +221,19 @@ class WindowIpc<T> with WindowListener {
   Future<bool> notifyWindow(int targetId, T data) async {
     if (!_outgoing.containsKey(targetId)) {
       if (!await connectWindow(targetId)) {
-        debugPrint('[IPC:${_wm.id}] notifyWindow($targetId): connect failed, dropping');
+        debugPrint(
+            '[IPC:${_wm.id}] notifyWindow($targetId): connect failed, dropping');
         return false;
       }
     }
     try {
       _outgoing[targetId]!.send([_wm.id, data]);
-      debugPrint('[IPC:${_wm.id}] notifyWindow($targetId): sent  payload=$data');
+      debugPrint(
+          '[IPC:${_wm.id}] notifyWindow($targetId): sent  payload=$data');
       return true;
     } catch (e) {
-      debugPrint('[IPC:${_wm.id}] notifyWindow($targetId): send failed ($e), removing dead port');
+      debugPrint(
+          '[IPC:${_wm.id}] notifyWindow($targetId): send failed ($e), removing dead port');
       _disconnectFrom(targetId);
       return false;
     }
@@ -268,7 +279,8 @@ class WindowIpc<T> with WindowListener {
     int fromWindowId,
     dynamic arguments,
   ) async {
-    debugPrint('[IPC:${_wm.id}] onEventFromWindow: method=$method  from=$fromWindowId  args=$arguments');
+    debugPrint(
+        '[IPC:${_wm.id}] onEventFromWindow: method=$method  from=$fromWindowId  args=$arguments');
     if (method != 'ipc-connect') return null;
 
     final portName = (arguments as Map?)?['portName'] as String?;
@@ -276,13 +288,15 @@ class WindowIpc<T> with WindowListener {
     if (portName == null) return null;
 
     final sp = IsolateNameServer.lookupPortByName(portName);
-    debugPrint('[IPC:${_wm.id}] ipc-connect: lookup "$portName" -> ${sp != null ? "found" : "NOT FOUND"}');
+    debugPrint(
+        '[IPC:${_wm.id}] ipc-connect: lookup "$portName" -> ${sp != null ? "found" : "NOT FOUND"}');
     if (sp == null) return null;
 
     _incoming[fromWindowId] = sp;
     // Auto-populate outgoing so this window can reply without a second handshake.
     _outgoing.putIfAbsent(fromWindowId, () => sp);
-    debugPrint('[IPC:${_wm.id}] ipc-connect: window $fromWindowId registered in incoming+outgoing');
+    debugPrint(
+        '[IPC:${_wm.id}] ipc-connect: window $fromWindowId registered in incoming+outgoing');
     // Notify the app so it can set up stream listeners reactively.
     onConnected?.call(fromWindowId);
     return null;
@@ -294,8 +308,21 @@ class WindowIpc<T> with WindowListener {
   void onWindowEvent(String eventName, [int? windowId]) {
     if (windowId != null) return; // global event for another window, ignore
     if (eventName == 'close' || eventName == 'reuse-close') {
-      debugPrint('[IPC:${_wm.id}] onWindowEvent: $eventName -> disconnecting all peers');
-      _notifyAllDisconnect();
+      _maybeDisconnectAll(eventName);
     }
+  }
+
+  @internal
+  Future<void> close(String eventName) async {
+    if (_outgoing.isEmpty && _incoming.isEmpty) return;
+
+    debugPrint(
+        '[IPC:${_wm.id}] onWindowEvent: $eventName -> disconnecting all peers');
+    _notifyAllDisconnect();
+  }
+
+  Future<void> _maybeDisconnectAll(String eventName) async {
+    if (await _wm.isPreventClose()) return;
+    await close(eventName);
   }
 }
