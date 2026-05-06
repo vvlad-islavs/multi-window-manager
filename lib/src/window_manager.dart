@@ -46,6 +46,11 @@ const kWindowEventUndocked = 'undocked';
 ///   [MultiWindowManager._methodCallHandler] via [WindowRegistry.refresh].
 const kWindowEventReuseClose = 'reuse-close';
 
+/// Event emitted by the native layer right before [close]. Uses for close all
+/// process in window. Only for lib.
+@internal
+const kWindowEventConfirmClose = 'confirm-close';
+
 /// Event emitted globally by the native layer (WM_SHOWWINDOW with wParam=TRUE)
 /// when a reuse-enabled hidden window becomes visible again.
 /// Every engine's [MultiWindowManager._methodCallHandler] calls
@@ -255,6 +260,11 @@ class MultiWindowManager {
         }
       }
     } else if (_current != null && _id == _current!.id) {
+      if (eventName == kWindowEventConfirmClose) {
+        await _confirmClose();
+        return;
+      }
+
       if (eventName == kWindowEventReuseClose) {
         for (final l in List<ReusableWindowListener>.from(_reuseListeners)) {
           l.onReuseClose();
@@ -321,6 +331,25 @@ class MultiWindowManager {
         funcMap[eventName]?.call();
       }
     }
+  }
+
+  /// Calls when [kWindowEventConfirmClose]. Doing all async methods before close
+  /// -> setConfirmClose(true) -> close()
+  Future<void> _confirmClose() async {
+    if (_ipc != null) {
+      await _ipc?.close();
+    }
+    await setConfirmClose(true);
+
+    await close();
+  }
+
+  @internal
+  Future<void> setConfirmClose(bool isReadyToClose) async {
+    final Map<String, dynamic> arguments = {
+      'confirmClose': isReadyToClose,
+    };
+    await _invokeMethod('confirmClose', arguments);
   }
 
   /// Get the window listeners.
@@ -604,9 +633,6 @@ class MultiWindowManager {
 
   /// Try to close the window.
   Future<void> close() async {
-    if (_ipc != null && !await isPreventClose()) {
-      await _ipc?.close('close');
-    }
     await _invokeMethod('close');
   }
 

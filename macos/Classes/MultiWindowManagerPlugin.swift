@@ -108,8 +108,7 @@ public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
             if targetId >= 0,
                let optional = MultiWindowManager.windowManagers[targetId],
                let wm = optional,
-               wm.isReuseEnabled && !wm.isVisible() && !wm.isBeingReused
-            {
+               wm.isReuseEnabled && !wm.isVisible() && !wm.isBeingReused {
                 wm.isBeingReused = true
                 result(true)
             } else {
@@ -129,8 +128,7 @@ public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
         var wManager = windowManager
         if windowId >= 0,
            let optional = MultiWindowManager.windowManagers[windowId],
-           let wm = optional
-        {
+           let wm = optional {
             wManager = wm
         }
 
@@ -152,8 +150,7 @@ public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
         case "invokeMethodToWindow":
             let targetId = windowIdFromArgs(args, key: "targetWindowId")
             if let optional = MultiWindowManager.windowManagers[targetId],
-               let wm = optional
-            {
+               let wm = optional {
                 wm.channel?.invokeMethod("onEvent", arguments: args["args"]) { value in
                     if value is FlutterError {
                         result(value)
@@ -189,6 +186,10 @@ public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
 
         case "isPreventClose":
             result(wManager.isPreventClose())
+
+        case "confirmClose":
+            wManager.setConfirmClose(args)
+            result(true)
 
         case "setPreventClose":
             wManager.setPreventClose(args)
@@ -413,9 +414,15 @@ public class MultiWindowManagerPlugin: NSObject, FlutterPlugin {
     // Extracts an Int64 window ID from a method call argument dictionary.
     // Handles both Int (32-bit Dart ints) and Int64 (large Dart ints) codec values.
     private func windowIdFromArgs(_ args: [String: Any], key: String) -> Int64 {
-        if let v = args[key] as? Int64 { return v }
-        if let v = args[key] as? Int { return Int64(v) }
-        if let v = args[key] as? NSNumber { return v.int64Value }
+        if let v = args[key] as? Int64 {
+            return v
+        }
+        if let v = args[key] as? Int {
+            return Int64(v)
+        }
+        if let v = args[key] as? NSNumber {
+            return v.int64Value
+        }
         return -1
     }
 

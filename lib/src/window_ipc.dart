@@ -302,27 +302,28 @@ class WindowIpc<T> with WindowListener {
     return null;
   }
 
-  /// Detects when THIS window closes or hides via reuse mechanism.
-  /// Sends disconnect signal to all peers so they can clean up promptly.
-  @override
-  void onWindowEvent(String eventName, [int? windowId]) {
-    if (windowId != null) return; // global event for another window, ignore
-    if (eventName == 'close' || eventName == 'reuse-close') {
-      _maybeDisconnectAll(eventName);
-    }
-  }
+  // /// Detects when THIS window closes or hides via reuse mechanism.
+  // /// Sends disconnect signal to all peers so they can clean up promptly.
+  // @override
+  // void onWindowEvent(String eventName, [int? windowId]) {
+  //   if (windowId != null) return; // global event for another window, ignore
+  //   if (eventName == 'close' || eventName == 'reuse-close') {
+  //     _maybeDisconnectAll(eventName);
+  //   }
+  // }
 
   @internal
-  Future<void> close(String eventName) async {
+  Future<void> close() async {
     if (_outgoing.isEmpty && _incoming.isEmpty) return;
 
     debugPrint(
-        '[IPC:${_wm.id}] onWindowEvent: $eventName -> disconnecting all peers');
+      '[IPC:${_wm.id}] ipc-close: disconnecting all peers',
+    );
     _notifyAllDisconnect();
   }
-
-  Future<void> _maybeDisconnectAll(String eventName) async {
-    if (await _wm.isPreventClose()) return;
-    await close(eventName);
-  }
+  //
+  // Future<void> _maybeDisconnectAll(String eventName) async {
+  //   if (await _wm.isPreventClose()) return;
+  //   await close(eventName);
+  // }
 }

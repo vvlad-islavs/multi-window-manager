@@ -5,6 +5,7 @@ extension NSWindow {
     private struct AssociatedKeys {
         static var configured: Bool = false
     }
+
     var configured: Bool {
         get {
             return objc_getAssociatedObject(self, &AssociatedKeys.configured) as? Bool ?? false
@@ -13,6 +14,7 @@ extension NSWindow {
             objc_setAssociatedObject(self, &AssociatedKeys.configured, value, objc_AssociationPolicy.OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
     }
+
     public func hiddenWindowAtLaunch() {
         if !configured {
             setIsVisible(false)
@@ -116,6 +118,7 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
         }
     }
 
+    private var _isConfirmClose: Bool = false
     private var _isPreventClose: Bool = false
     private var _isMaximized: Bool = false
     private var _isMaximizable: Bool = true
@@ -155,6 +158,18 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func close() {
+        // setPreventClose(true) always wins regardless of isReuseEnabled.
+        if _isPreventClose {
+            emitEvent("close")
+            return
+        }
+
+        if !_isConfirmClose {
+            emitEvent("confirm-close")
+            return;
+        }
+
+
         mainWindow.performClose(nil)
     }
 
@@ -166,6 +181,10 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
         _isPreventClose = args["isPreventClose"] as! Bool
     }
 
+    public func setConfirmClose(_ args: [String: Any]) {
+        _isConfirmClose = args["confirmClose"] as! Bool
+    }
+
     public func isMaximizable() -> Bool {
         return _isMaximizable
     }
@@ -175,7 +194,9 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func focus() {
-        if isReuseEnabled && isInReusePool { return }
+        if isReuseEnabled && isInReusePool {
+            return
+        }
         NSApp.activate(ignoringOtherApps: false)
         mainWindow.makeKeyAndOrderFront(nil)
     }
@@ -193,7 +214,10 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
         // through the legitimate claimWindow -> show-window path (isBeingReused == true).
         // Any other show() call (e.g. from the hot-restart init sequence) is ignored.
         if isReuseEnabled && isInReusePool {
-            if !isBeingReused { return }
+            if !isBeingReused {
+                return
+            }
+
             isInReusePool = false
         }
         let inactive = args["inactive"] as? Bool ?? false
@@ -261,11 +285,13 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     }
 
     public func dock(_ args: [String: Any]) {
-        if isDockable() {}
+        if isDockable() {
+        }
     }
 
     public func undock() {
-        if isDockable() {}
+        if isDockable() {
+        }
     }
 
     public func isFullScreen() -> Bool {
@@ -310,7 +336,7 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
 
         let isTransparent: Bool =
             backgroundColorA == 0 && backgroundColorR == 0
-            && backgroundColorG == 0 && backgroundColorB == 0
+                && backgroundColorG == 0 && backgroundColorB == 0
 
         if isTransparent {
             mainWindow.backgroundColor = NSColor.clear
@@ -583,7 +609,9 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
     public func setIcon(_ args: [String: Any]) {
         guard let iconPath = args["iconPath"] as? String,
               let image = NSImage(contentsOfFile: iconPath)
-        else { return }
+        else {
+            return
+        }
         NSApplication.shared.applicationIconImage = image
     }
 
@@ -591,7 +619,9 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
         DispatchQueue.main.async {
             guard let contentView = self.mainWindow.contentView,
                   let event = NSApp.currentEvent
-            else { return }
+            else {
+                return
+            }
             let menu = NSMenu()
             if self.mainWindow.styleMask.contains(.miniaturizable) {
                 menu.addItem(NSMenuItem(
@@ -634,17 +664,13 @@ public class MultiWindowManager: NSObject, NSWindowDelegate {
 
     // NSWindowDelegate
     public func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // setPreventClose(true) always wins regardless of isReuseEnabled.
-        if _isPreventClose {
-            emitEvent("close")
-            return false
-        }
         // Reuse mode: hide instead of destroy, mirror WM_CLOSE + is_reuse_enabled_ from Windows.
         // orderOut must be called synchronously BEFORE emitEvent so that isVisible() already
         // returns false by the time Dart receives the event and queries getActiveWindowIds().
         if isReuseEnabled {
             sender.orderOut(nil)
             isInReusePool = true
+            _isConfirmClose = false;
             emitEvent("reuse-close")
             return false
         }
