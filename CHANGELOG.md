@@ -1,3 +1,7 @@
+## 1.1.4
+
+- Fixed ipc close in reuseMode. Added internal confirm close
+
 ## 1.1.3
 
 - Fixed hotRestart when enabled reuseMode
